@@ -706,11 +706,8 @@ if (currentScreen === "login") {
       <section className="relative z-10 mx-auto flex min-h-screen max-w-md items-center justify-center px-4 py-10">
         <Card className="w-full rounded-[2rem] border border-white/15 bg-white/10 text-white shadow-2xl shadow-black/40 backdrop-blur-2xl">
           <CardContent className="p-6 md:p-8">
-            <div className="mb-8">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-500 text-white">
-                <Flag className="h-7 w-7" />
-              </div>
-
+            <div className="mb-8 flex flex-col items-center text-center">
+  
               <h1 className="mt-5 text-4xl font-black tracking-[-0.07em]">
                 Vizi Board
               </h1>
@@ -765,7 +762,7 @@ if (currentScreen === "login") {
 
               <Button
                 type="submit"
-                className="h-13 rounded-full bg-orange-500 font-black text-white hover:bg-orange-600"
+                className="h-13 rounded-full bg-neutral-950 font-black text-white hover:bg-orange-600"
               >
                 Se connecter
                 <ArrowRight className="ml-2 h-4 w-4" />
@@ -789,10 +786,6 @@ if (currentScreen === "dashboard" && isAuthenticated) {
         <header className="flex flex-col gap-4 rounded-[2rem] bg-slate-950 p-5 text-white shadow-2xl shadow-slate-300/70 md:flex-row md:items-center md:justify-between md:p-7">
           <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-500 text-white">
-                <Flag className="h-6 w-6" />
-              </div>
-
               <div>
                 <h1 className="text-4xl font-black tracking-[-0.07em] md:text-5xl">
                   Missions
@@ -912,14 +905,13 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
 }
 if (currentScreen === "mission" && isAuthenticated) {
   return (
-    <main className="min-h-screen bg-[#f5f6f8] text-slate-950">
-      <section className="mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
+    <main className="relative min-h-screen overflow-hidden bg-[#f5f6f8] text-slate-950">
+    <div className="absolute inset-0 bg-[url('/mission-bg.jpg')] bg-cover bg-center opacity-20" />
+    <div className="absolute inset-0 bg-[#f5f6f8]/85" />
+      <section className="relative z-10 mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
         <header className="flex flex-col gap-4 rounded-[2rem] bg-slate-950 p-5 text-white shadow-2xl shadow-slate-300/70 md:flex-row md:items-center md:justify-between md:p-7">
           <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-500 text-white">
-                <Flag className="h-6 w-6" />
-              </div>
               <div>
                 <h1 className="text-4xl font-black tracking-[-0.07em] md:text-5xl">Vizi Board</h1>
                 <p className="mt-1 text-sm font-bold text-white/55">Préparer et suivre la visibilité de marque sur événement.</p>
