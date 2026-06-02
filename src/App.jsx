@@ -134,6 +134,33 @@ const defaultAssets = [];
 
 const DEMO_TERRAIN_TOKEN = "vizi-demo-token";
 
+const DEMO_PROVIDER = {
+  email: "demo@viziboard.fr",
+  password: "demo123",
+  name: "Prestataire Vizi Board",
+};
+
+const defaultMissions = [
+  {
+    id: "mission-demo-001",
+    eventName: "Activation été — Lac du Bourget",
+    brandName: "Explore Savoie",
+    location: "Aix-les-Bains",
+    installDate: "2026-06-17",
+    status: "draft",
+    statusLabel: "Brouillon",
+  },
+  {
+    id: "mission-demo-002",
+    eventName: "Trail des Bauges",
+    brandName: "Explore Savoie",
+    location: "Le Châtelard",
+    installDate: "2026-07-04",
+    status: "submitted_by_installer",
+    statusLabel: "À valider",
+  },
+];
+
 function getStatus(status) {
   return statusOptions.find((option) => option.value === status) || statusOptions[0];
 }
@@ -308,6 +335,17 @@ function AssetCard({ asset, mode, onStatusChange, onDelete, onPhotoUpload }) {
 }
 
 export default function ViziBoardApp() {
+
+  const [currentScreen, setCurrentScreen] = useState("login");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginForm, setLoginForm] = useState({
+    email: "",
+    password: "",
+  });
+  const [loginError, setLoginError] = useState("");
+  const [missions, setMissions] = useState(defaultMissions);
+  const [activeMissionId, setActiveMissionId] = useState(null);
+
   const [project, setProject] = useState(defaultProject);
   const [assets, setAssets] = useState(defaultAssets);
   const [brands] = useState(defaultBrands);
@@ -600,6 +638,243 @@ const totalPhotos = assets.reduce(
   }));
 }
 
+function handleLogin(event) {
+  event.preventDefault();
+
+  const emailMatches = loginForm.email.trim() === DEMO_PROVIDER.email;
+  const passwordMatches = loginForm.password === DEMO_PROVIDER.password;
+
+  if (!emailMatches || !passwordMatches) {
+    setLoginError("Identifiants incorrects.");
+    return;
+  }
+
+  setIsAuthenticated(true);
+  setLoginError("");
+  setCurrentScreen("dashboard");
+}
+
+function logout() {
+  setIsAuthenticated(false);
+  setCurrentScreen("login");
+  setLoginForm({ email: "", password: "" });
+}
+
+function openMission(missionId) {
+  setActiveMissionId(missionId);
+  setCurrentScreen("mission");
+}
+
+function createNewMission() {
+  const missionId = `mission-${Date.now()}`;
+
+  const newMission = {
+    id: missionId,
+    eventName: "Nouvelle mission",
+    brandName: "Non définie",
+    location: "Lieu à définir",
+    installDate: "",
+    status: "draft",
+    statusLabel: "Brouillon",
+  };
+
+  setMissions((current) => [newMission, ...current]);
+
+  setProject({
+    ...defaultProject,
+    id: missionId,
+    eventName: "Nouvelle mission",
+    brandId: "",
+    installerId: "",
+    location: "",
+    fieldContact: "",
+    objective: "",
+  });
+
+  setAssets([]);
+  setActiveMissionId(missionId);
+  setCurrentScreen("mission");
+}
+
+if (currentScreen === "login") {
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+      <div className="absolute inset-0 bg-[url('/login-bg.jpg')] bg-cover bg-center" />
+      <div className="absolute inset-0 bg-slate-950/35" />
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-950/40 via-slate-950/15 to-orange-950/20" />
+
+      <section className="relative z-10 mx-auto flex min-h-screen max-w-md items-center justify-center px-4 py-10">
+        <Card className="w-full rounded-[2rem] border border-white/15 bg-white/10 text-white shadow-2xl shadow-black/40 backdrop-blur-2xl">
+          <CardContent className="p-6 md:p-8">
+            <div className="mb-8">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-orange-500 text-white">
+                <Flag className="h-7 w-7" />
+              </div>
+
+              <h1 className="mt-5 text-4xl font-black tracking-[-0.07em]">
+                Vizi Board
+              </h1>
+
+              <p className="mt-2 text-sm font-semibold leading-6 text-white/60">
+                Connexion prestataire. Crée, assigne et valide tes missions de visibilité terrain.
+              </p>
+            </div>
+
+            <form onSubmit={handleLogin} className="grid gap-4">
+              <label className="block">
+                <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                  Email
+                </span>
+                <Input
+                  type="email"
+                  value={loginForm.email}
+                  onChange={(event) =>
+                    setLoginForm((current) => ({
+                      ...current,
+                      email: event.target.value,
+                    }))
+                  }
+                  placeholder="demo@viziboard.fr"
+                  className="h-12 rounded-2xl border-white/10 bg-white/10 font-semibold text-white placeholder:text-white/35"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-white/45">
+                  Mot de passe
+                </span>
+                <Input
+                  type="password"
+                  value={loginForm.password}
+                  onChange={(event) =>
+                    setLoginForm((current) => ({
+                      ...current,
+                      password: event.target.value,
+                    }))
+                  }
+                  placeholder="demo123"
+                  className="h-12 rounded-2xl border-white/10 bg-white/10 font-semibold text-white placeholder:text-white/35"
+                />
+              </label>
+
+              {loginError && (
+                <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-sm font-black text-red-200">
+                  {loginError}
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                className="h-13 rounded-full bg-orange-500 font-black text-white hover:bg-orange-600"
+              >
+                Se connecter
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </form>
+
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-4 text-xs font-semibold leading-6 text-white/50">
+              Accès démo : demo@viziboard.fr / demo123
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+    </main>
+  );
+}
+
+if (currentScreen === "dashboard" && isAuthenticated) {
+  return (
+    <main className="min-h-screen bg-[#f5f6f8] text-slate-950">
+      <section className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
+        <header className="flex flex-col gap-4 rounded-[2rem] bg-slate-950 p-5 text-white shadow-2xl shadow-slate-300/70 md:flex-row md:items-center md:justify-between md:p-7">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-500 text-white">
+                <Flag className="h-6 w-6" />
+              </div>
+
+              <div>
+                <h1 className="text-4xl font-black tracking-[-0.07em] md:text-5xl">
+                  Missions
+                </h1>
+                <p className="mt-1 text-sm font-bold text-white/55">
+                  Historique et création des missions terrain.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={createNewMission}
+              className="rounded-full bg-orange-500 font-black text-white hover:bg-orange-600"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Créer une mission
+            </Button>
+
+            <Button
+              type="button"
+              onClick={logout}
+              variant="secondary"
+              className="rounded-full bg-white/10 text-white hover:bg-white/15"
+            >
+              Déconnexion
+            </Button>
+          </div>
+        </header>
+
+        <section className="mt-6 grid gap-4">
+          {missions.map((mission) => (
+            <Card
+              key={mission.id}
+              className="rounded-3xl border-black/10 bg-white shadow-sm shadow-slate-200/60"
+            >
+              <CardContent className="p-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-black/10 bg-slate-50 text-slate-600"
+                      >
+                        {mission.statusLabel}
+                      </Badge>
+
+                      <Badge className="rounded-full bg-orange-100 text-orange-800 hover:bg-orange-100">
+                        {mission.brandName}
+                      </Badge>
+                    </div>
+
+                    <h2 className="text-2xl font-black tracking-[-0.04em] text-slate-950">
+                      {mission.eventName}
+                    </h2>
+
+                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+                      {mission.location} · Installation :{" "}
+                      {mission.installDate || "date à définir"}
+                    </p>
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => openMission(mission.id)}
+                    className="rounded-full bg-slate-950 font-black text-white hover:bg-orange-500"
+                  >
+                    Ouvrir
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </section>
+      </section>
+    </main>
+  );
+}
+
 if (mode === "terrain" && !isTerrainAccessGranted) {
   return (
     <main className="min-h-screen bg-[#f5f6f8] text-slate-950">
@@ -635,7 +910,7 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
     </main>
   );
 }
-
+if (currentScreen === "mission" && isAuthenticated) {
   return (
     <main className="min-h-screen bg-[#f5f6f8] text-slate-950">
       <section className="mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
@@ -656,7 +931,7 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
               Démo portfolio
             </Badge>
 
-            <div className="flex rounded-full bg-white/10 p-1">
+            {/* <div className="flex rounded-full bg-white/10 p-1">
               <button
                 type="button"
                 onClick={() => setMode("admin")}
@@ -680,7 +955,16 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
               >
                 Terrain
               </button>
-            </div>
+            </div> */}
+
+            <Button
+              type="button"
+              onClick={() => setCurrentScreen("dashboard")}
+              variant="secondary"
+              className="rounded-full bg-white/10 text-white hover:bg-white/15"
+            >
+              Retour missions
+            </Button>
 
             {mode === "admin" && (
               <Button
@@ -691,6 +975,7 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
                 <RotateCcw className="mr-2 h-4 w-4" />
                 Réinitialiser
               </Button>
+            
             )}
           </div>
         </header>
@@ -1453,4 +1738,7 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
       </section>
     </main>
   );
+  }
+
+  return null;
 }
