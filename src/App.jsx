@@ -134,11 +134,20 @@ const defaultAssets = [];
 
 const DEMO_TERRAIN_TOKEN = "vizi-demo-token";
 
-const DEMO_PROVIDER = {
+const DEMO_PROVIDERS = [
+  {
+    id: "kevin-lefant",
+    email: "contact@kevinlefant.com",
+    password: "K7v!zB92xL",
+    name: "Kevin",
+  },
+
+{
   email: "demo@viziboard.fr",
   password: "demo123",
   name: "Prestataire Vizi Board",
-};
+},
+];
 
 const defaultMissions = [
   {
@@ -155,9 +164,27 @@ const defaultMissions = [
     eventName: "Trail des Bauges",
     brandName: "Explore Savoie",
     location: "Le Châtelard",
-    installDate: "2026-07-04",
+    installDate: "2026-06-04",
     status: "submitted_by_installer",
     statusLabel: "À valider",
+  },
+  {
+    id: "mission-demo-003",
+    eventName: "Salon outdoor Savoie",
+    brandName: "Explore Savoie",
+    location: "Chambéry",
+    installDate: "2026-07-12",
+    status: "assigned",
+    statusLabel: "Assignée",
+  },
+  {
+    id: "mission-demo-004",
+    eventName: "Test PLV printemps",
+    brandName: "Explore Savoie",
+    location: "Annecy",
+    installDate: "2026-05-12",
+    status: "validated_by_provider",
+    statusLabel: "Validée",
   },
 ];
 
@@ -191,13 +218,16 @@ function StatCard({ icon: Icon, label, value, helper }) {
 function Field({ label, value, onChange, placeholder, type = "text" }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">{label}</span>
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-white/40">
+        {label}
+      </span>
+
       <Input
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="h-12 rounded-2xl border-black/10 bg-white font-semibold"
+        className="h-12 rounded-2xl border-white/10 bg-white/[0.08] font-semibold text-white placeholder:text-white/35 [color-scheme:dark]"
       />
     </label>
   );
@@ -334,6 +364,84 @@ function AssetCard({ asset, mode, onStatusChange, onDelete, onPhotoUpload }) {
   );
 }
 
+function MissionSection({ title, helper, missions, onOpenMission }) {
+  return (
+    <section className="grid gap-3">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black tracking-[-0.04em] text-white">
+            {title}
+          </h2>
+          <p className="mt-1 text-sm font-semibold text-white/45">
+            {helper}
+          </p>
+        </div>
+
+        <Badge
+          variant="outline"
+          className="rounded-full border-white/10 bg-white/[0.06] text-white/60"
+        >
+          {missions.length}
+        </Badge>
+      </div>
+
+      {missions.length === 0 ? (
+        <Card className="rounded-3xl border border-dashed border-white/10 bg-white/[0.035] text-white backdrop-blur-xl">
+          <CardContent className="p-5">
+            <p className="text-sm font-semibold text-white/40">
+              Aucune mission dans cette catégorie.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        missions.map((mission) => (
+          <Card
+            key={mission.id}
+            className="rounded-3xl border border-white/10 bg-white/[0.055] text-white backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-white/20 hover:bg-white/[0.075]"
+          >
+            <CardContent className="p-5">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className="rounded-full border-white/10 bg-white/[0.06] text-white/60"
+                    >
+                      {mission.statusLabel}
+                    </Badge>
+
+                    <Badge className="rounded-full bg-orange-500/15 text-orange-300 hover:bg-orange-500/15">
+                      {mission.brandName}
+                    </Badge>
+                  </div>
+
+                  <h3 className="text-2xl font-black tracking-[-0.04em] text-white">
+                    {mission.eventName}
+                  </h3>
+
+                  <p className="mt-2 text-sm font-semibold leading-6 text-white/50">
+                    {mission.location} · Installation :{" "}
+                    {mission.installDate || "date à définir"}
+                  </p>
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={() => onOpenMission(mission.id)}
+                  className="rounded-full bg-white text-slate-950 font-black hover:bg-orange-500 hover:text-white"
+                >
+                  Ouvrir
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))
+      )}
+    </section>
+  );
+}
+
 export default function ViziBoardApp() {
 
   const [currentScreen, setCurrentScreen] = useState("login");
@@ -373,6 +481,8 @@ const [missionComment, setMissionComment] = useState("");
 const [missionComments, setMissionComments] = useState([]);
 
 const [installers] = useState(defaultInstallers);
+
+const [currentUser, setCurrentUser] = useState(null);
 
 const selectedInstaller = useMemo(() => {
   return installers.find((installer) => installer.id === project.installerId) || null;
@@ -456,6 +566,14 @@ const params = new URLSearchParams(window.location.search);
   };
 }, []);
 
+const hasTerrainParams =
+  !!urlParams.missionId && !!urlParams.installerId && !!urlParams.token;
+
+const isTerrainLink =
+  urlParams.missionId === project.id &&
+  urlParams.installerId === project.installerId &&
+  urlParams.token === DEMO_TERRAIN_TOKEN;
+
 const terrainLink = useMemo(() => {
   if (!selectedInstaller) return "";
 
@@ -473,18 +591,21 @@ const terrainLink = useMemo(() => {
   return `${baseUrl}?${params.toString()}`;
 }, [project.id, selectedInstaller]);
 
-const isTerrainLink =
-  urlParams.missionId === project.id &&
-  urlParams.installerId === project.installerId &&
-  urlParams.token === DEMO_TERRAIN_TOKEN;
+const groupedMissions = useMemo(() => {
+  return {
+    current: missions.filter((mission) => getMissionCategory(mission) === "current"),
+    upcoming: missions.filter((mission) => getMissionCategory(mission) === "upcoming"),
+    past: missions.filter((mission) => getMissionCategory(mission) === "past"),
+  };
+}, [missions]);
 
 const isTerrainAccessGranted = mode === "terrain" && isTerrainLink;
 
 useEffect(() => {
-  if (isTerrainLink) {
-    setMode("terrain");
+  if (hasTerrainParams) {
+    setCurrentScreen("terrain");
   }
-}, [isTerrainLink]);
+}, [hasTerrainParams]);
 
 const totalPhotos = assets.reduce(
   (total, asset) => total + (asset.photos?.length || 0),
@@ -641,20 +762,25 @@ const totalPhotos = assets.reduce(
 function handleLogin(event) {
   event.preventDefault();
 
-  const emailMatches = loginForm.email.trim() === DEMO_PROVIDER.email;
-  const passwordMatches = loginForm.password === DEMO_PROVIDER.password;
+  const user = DEMO_PROVIDERS.find(
+    (provider) =>
+      provider.email === loginForm.email.trim() &&
+      provider.password === loginForm.password
+  );
 
-  if (!emailMatches || !passwordMatches) {
+  if (!user) {
     setLoginError("Identifiants incorrects.");
     return;
   }
 
+  setCurrentUser(user);
   setIsAuthenticated(true);
   setLoginError("");
   setCurrentScreen("dashboard");
 }
 
 function logout() {
+  setCurrentUser(null);
   setIsAuthenticated(false);
   setCurrentScreen("login");
   setLoginForm({ email: "", password: "" });
@@ -696,6 +822,210 @@ function createNewMission() {
   setCurrentScreen("mission");
 }
 
+function getMissionCategory(mission) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (!mission.installDate) return "upcoming";
+
+  const installDate = new Date(mission.installDate);
+  installDate.setHours(0, 0, 0, 0);
+
+  const activeStatuses = ["assigned", "in_progress", "submitted_by_installer"];
+
+  if (activeStatuses.includes(mission.status)) {
+    return "current";
+  }
+
+  if (installDate >= today) {
+    return "upcoming";
+  }
+
+  return "past";
+}
+
+if (currentScreen === "terrain") {
+  if (!isTerrainLink) {
+    return (
+      <main className="relative min-h-screen overflow-hidden bg-[#050B14] text-white">
+        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(rgba(255,255,255,0.16)_1px,transparent_1px)] bg-[size:22px_22px] opacity-35" />
+
+        <section className="relative z-10 mx-auto flex min-h-screen max-w-3xl items-center justify-center px-4 py-10">
+          <Card className="w-full rounded-[2rem] border border-red-400/20 bg-red-500/10 text-white backdrop-blur-xl">
+            <CardContent className="p-6 md:p-8">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-500/15 text-red-300">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-red-300">
+                    Accès refusé
+                  </p>
+
+                  <h1 className="mt-2 text-3xl font-black tracking-[-0.05em] text-white">
+                    Lien terrain invalide
+                  </h1>
+
+                  <p className="mt-3 text-sm font-semibold leading-6 text-white/60">
+                    Cette mission est accessible uniquement via le lien envoyé par le donneur de mission.
+                  </p>
+
+                  <p className="mt-4 text-sm font-medium leading-6 text-white/45">
+                    Demande au donneur de mission de te renvoyer le bon lien.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[#050B14] text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(rgba(255,255,255,0.16)_1px,transparent_1px)] bg-[size:22px_22px] opacity-35" />
+
+      <section className="relative z-10 mx-auto max-w-5xl px-4 py-5 md:px-8 md:py-8">
+        <header className="rounded-[2rem] border border-white/10 bg-[#0B1624]/85 p-5 text-white backdrop-blur-xl md:p-7">
+          <div className="flex items-start gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-500 text-white">
+              <Truck className="h-6 w-6" />
+            </div>
+
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                Vue terrain
+              </p>
+
+              <h1 className="mt-1 text-3xl font-black tracking-[-0.05em] md:text-4xl">
+                {project.eventName}
+              </h1>
+
+              <p className="mt-2 text-sm font-semibold leading-6 text-white/55">
+                Mission assignée à {selectedInstaller?.name}
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <section className="mt-5 grid gap-5">
+          <Card className="rounded-[2rem] border border-white/10 bg-[#0B1624]/85 text-white backdrop-blur-xl">
+            <CardContent className="p-5 md:p-6">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                Brief terrain
+              </p>
+
+              <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
+                Informations mission
+              </h2>
+
+              <div className="mt-4 grid gap-3 text-sm font-semibold leading-6 text-white/60">
+                <p>Lieu : {project.location || "Non renseigné"}</p>
+                <p>
+                  Installation : {project.installDate || "Date non renseignée"} avant{" "}
+                  {project.installDeadline || "heure non renseignée"}
+                </p>
+                <p>
+                  Contact organisateur : {project.fieldContact || "Non renseigné"}
+                </p>
+              </div>
+
+              {project.objective && (
+                <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+                  <div className="text-sm font-black text-white">
+                    Objectif visibilité
+                  </div>
+                  <p className="mt-2 text-sm font-medium leading-6 text-white/60">
+                    {project.objective}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                Supports à installer
+              </p>
+              <h2 className="mt-1 text-3xl font-black tracking-[-0.05em]">
+                Mission terrain
+              </h2>
+            </div>
+
+            {assets.length === 0 ? (
+              <Card className="rounded-3xl border border-dashed border-white/10 bg-white/[0.04] text-white backdrop-blur-xl">
+                <CardContent className="p-6">
+                  <p className="text-sm font-semibold text-white/45">
+                    Aucun support ajouté à cette mission.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              assets.map((asset) => (
+                <AssetCard
+                  key={asset.id}
+                  asset={asset}
+                  mode="terrain"
+                  onStatusChange={updateAssetStatus}
+                  onDelete={deleteAsset}
+                  onPhotoUpload={addAssetPhoto}
+                />
+              ))
+            )}
+          </div>
+
+          <Card className="rounded-[2rem] border border-white/10 bg-[#0B1624]/85 text-white backdrop-blur-xl">
+            <CardContent className="p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                    Validation terrain
+                  </p>
+
+                  <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
+                    Finaliser le montage
+                  </h2>
+
+                  <p className="mt-1 text-sm font-semibold leading-6 text-white/50">
+                    {totalPhotos} photo{totalPhotos > 1 ? "s" : ""} ajoutée
+                    {totalPhotos > 1 ? "s" : ""} sur cette mission.
+                  </p>
+                </div>
+
+                <Button
+                  onClick={completeMission}
+                  className={`h-13 rounded-full px-6 font-black ${
+                    missionCompleted
+                      ? "bg-emerald-600 text-white hover:bg-emerald-600"
+                      : "bg-orange-500 text-white hover:bg-orange-600"
+                  }`}
+                >
+                  {missionCompleted ? "Montage terminé ✓" : "Montage terminé"}
+                </Button>
+              </div>
+
+              {completionError && (
+                <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm font-black text-red-200">
+                  {completionError}
+                </div>
+              )}
+
+              {missionCompleted && (
+                <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm font-black text-emerald-200">
+                  Mission validée avec preuve photo. Le montage peut être considéré comme terminé.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      </section>
+    </main>
+  );
+}
+
 if (currentScreen === "login") {
   return (
     <main className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
@@ -731,7 +1061,7 @@ if (currentScreen === "login") {
                       email: event.target.value,
                     }))
                   }
-                  placeholder="demo@viziboard.fr"
+                  placeholder=" votre addresse email"
                   className="h-12 rounded-2xl border-white/10 bg-white/10 font-semibold text-white placeholder:text-white/35"
                 />
               </label>
@@ -749,7 +1079,7 @@ if (currentScreen === "login") {
                       password: event.target.value,
                     }))
                   }
-                  placeholder="demo123"
+                  placeholder="mot de passe"
                   className="h-12 rounded-2xl border-white/10 bg-white/10 font-semibold text-white placeholder:text-white/35"
                 />
               </label>
@@ -770,6 +1100,8 @@ if (currentScreen === "login") {
             </form>
 
             <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-4 text-xs font-semibold leading-6 text-white/50">
+              Accès Kevin : contact@kevinlefant.com / K7v!zB92xL
+              <br />
               Accès démo : demo@viziboard.fr / demo123
             </div>
           </CardContent>
@@ -781,16 +1113,19 @@ if (currentScreen === "login") {
 
 if (currentScreen === "dashboard" && isAuthenticated) {
   return (
-    <main className="min-h-screen bg-[#f5f6f8] text-slate-950">
-      <section className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
-        <header className="flex flex-col gap-4 rounded-[2rem] bg-slate-950 p-5 text-white shadow-2xl shadow-slate-300/70 md:flex-row md:items-center md:justify-between md:p-7">
+    <main className="relative min-h-screen overflow-hidden bg-[#050506] text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(rgba(255,255,255,0.14)_1px,transparent_1px)] bg-[size:22px_22px] opacity-35" />
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.05),transparent_34%)]" />
+      <section className="relative z-10 mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-10">
+        <header className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-slate/[0.055] p-5 text-white backdrop-blur-xl md:flex-row md:items-center md:justify-between md:p-7">
           <div>
             <div className="flex items-center gap-3">
               <div>
                 <h1 className="text-4xl font-black tracking-[-0.07em] md:text-5xl">
-                  Missions
+                  Bonjour {currentUser?.name || "utilisateur"}
                 </h1>
-                <p className="mt-1 text-sm font-bold text-white/55">
+
+                <p className="mt-1 text-sm font-semibold text-white/40">
                   Historique et création des missions terrain.
                 </p>
               </div>
@@ -818,50 +1153,56 @@ if (currentScreen === "dashboard" && isAuthenticated) {
           </div>
         </header>
 
-        <section className="mt-6 grid gap-4">
-          {missions.map((mission) => (
-            <Card
-              key={mission.id}
-              className="rounded-3xl border-black/10 bg-white shadow-sm shadow-slate-200/60"
-            >
-              <CardContent className="p-5">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className="rounded-full border-black/10 bg-slate-50 text-slate-600"
-                      >
-                        {mission.statusLabel}
-                      </Badge>
+        <Card className="mt-6 overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.055] text-white backdrop-blur-xl">
+          <CardContent className="p-0">
+            <div className="relative h-56 overflow-hidden md:h-72">
+              <img
+                src="/dashboard-hero.jpg"
+                alt="Préparation terrain événementielle"
+                className="h-full w-full object-cover"
+              />
 
-                      <Badge className="rounded-full bg-orange-100 text-orange-800 hover:bg-orange-100">
-                        {mission.brandName}
-                      </Badge>
-                    </div>
+              <div className="absolute inset-0 bg-black/35" />
+              <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/25 to-transparent" />
 
-                    <h2 className="text-2xl font-black tracking-[-0.04em] text-slate-950">
-                      {mission.eventName}
-                    </h2>
+              <div className="absolute bottom-0 left-0 max-w-2xl p-5 md:p-7">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                  Terrain operations
+                </p>
 
-                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
-                      {mission.location} · Installation :{" "}
-                      {mission.installDate || "date à définir"}
-                    </p>
-                  </div>
+                <h2 className="mt-2 text-3xl font-black tracking-[-0.05em] text-white md:text-4xl">
+                  Pilote tes missions de visibilité sans perdre le terrain de vue.
+                </h2>
 
-                  <Button
-                    type="button"
-                    onClick={() => openMission(mission.id)}
-                    className="rounded-full bg-slate-950 font-black text-white hover:bg-orange-500"
-                  >
-                    Ouvrir
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                <p className="mt-3 text-sm font-semibold leading-6 text-white/65">
+                  Crée, assigne, suis et valide tes déploiements PLV depuis un seul espace.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <section className="mt-6 grid gap-8">
+          <MissionSection
+            title="En cours"
+            helper="Missions assignées, en exécution ou en attente de validation."
+            missions={groupedMissions.current}
+            onOpenMission={openMission}
+          />
+
+          <MissionSection
+            title="À venir"
+            helper="Missions planifiées ou encore en préparation."
+            missions={groupedMissions.upcoming}
+            onOpenMission={openMission}
+          />
+
+          <MissionSection
+            title="Passées"
+            helper="Missions terminées ou dont la date d’installation est passée."
+            missions={groupedMissions.past}
+            onOpenMission={openMission}
+          />
         </section>
       </section>
     </main>
@@ -905,11 +1246,12 @@ if (mode === "terrain" && !isTerrainAccessGranted) {
 }
 if (currentScreen === "mission" && isAuthenticated) {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#f5f6f8] text-slate-950">
-    <div className="absolute inset-0 bg-[url('/mission-bg.jpg')] bg-cover bg-center opacity-20" />
-    <div className="absolute inset-0 bg-[#f5f6f8]/85" />
-      <section className="relative z-10 mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
-        <header className="flex flex-col gap-4 rounded-[2rem] bg-slate-950 p-5 text-white shadow-2xl shadow-slate-300/70 md:flex-row md:items-center md:justify-between md:p-7">
+   <main className="relative min-h-screen overflow-hidden bg-[#050B14] text-white">
+  <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(rgba(255,255,255,0.18)_1px,transparent_1px)] bg-[size:22px_22px] opacity-45" />
+  <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.07),transparent_36%)]" />
+
+  <section className="relative z-10 mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8">
+        <header className="flex flex-col gap-4 rounded-[2rem] border border-white/10 bg-white/[0.055] p-5 text-white backdrop-blur-xl md:flex-row md:items-center md:justify-between md:p-7">
           <div>
             <div className="flex items-center gap-3">
               <div>
@@ -979,7 +1321,7 @@ if (currentScreen === "mission" && isAuthenticated) {
         >
           {mode === "admin" && (
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
-            <Card className="rounded-[2rem] border-black/10 bg-white shadow-sm shadow-slate-200/60">
+            <Card className="rounded-[2rem] border border-white/10 bg-white/[0.06] text-white shadow-2xl shadow-black/20 backdrop-blur-xl">
               <CardContent className="p-5 md:p-6">
                 <div className="mb-5 flex items-center justify-between gap-4">
                   <div>
@@ -1002,7 +1344,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                           value={project.brandId}
                           onValueChange={(value) => updateProject("brandId", value)}
                         >
-                          <SelectTrigger className="h-12 rounded-2xl border-black/10 bg-white font-semibold">
+                          <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
                             <SelectValue placeholder="Sélectionner une marque" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1036,7 +1378,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                     </span>
 
                     <Select value={project.installerId} onValueChange={assignInstaller}>
-                      <SelectTrigger className="h-12 rounded-2xl border-black/10 bg-white font-semibold">
+                      <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
                         <SelectValue placeholder="Sélectionner un monteur" />
                       </SelectTrigger>
 
@@ -1063,20 +1405,20 @@ if (currentScreen === "mission" && isAuthenticated) {
                   </label>
                 </div>
 
-                <div className="mt-3 rounded-2xl bg-slate-50 p-3">
-                  <div className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
+                <div className="mt-3 rounded-2xl border border-white/10 bg-black/40 p-3 backdrop-blur-xl">
+                  <div className="text-xs font-black uppercase tracking-[0.16em] text-white/40">
                     Lien terrain
                   </div>
 
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="break-all text-sm font-semibold leading-6 text-slate-600">
+                    <p className="break-all rounded-xl bg-white/[0.06] px-3 py-2 text-sm font-semibold leading-6 text-white/60">
                       {terrainLink}
                     </p>
 
                     <Button
                       type="button"
                       onClick={() => navigator.clipboard.writeText(terrainLink)}
-                      className="shrink-0 rounded-full bg-slate-950 font-black text-white hover:bg-orange-500"
+                      className="shrink-0 rounded-full bg-white font-black text-slate-950 hover:bg-orange-500 hover:text-white"
                     >
                       Copier
                     </Button>
@@ -1088,14 +1430,15 @@ if (currentScreen === "mission" && isAuthenticated) {
                   <Textarea
                     value={project.objective}
                     onChange={(event) => updateProject("objective", event.target.value)}
-                    className="min-h-[110px] rounded-2xl border-black/10 bg-white font-medium leading-6"
+                    placeholder="Décris l’objectif de visibilité de la marque sur cette mission..."
+                    className="min-h-[110px] rounded-2xl border-white/10 bg-white/[0.08] font-medium leading-6 text-white placeholder:text-white/35"
                   />
                 </label>
               </CardContent>
             </Card>
 
           {!selectedBrand && (
-            <Card className="rounded-[2rem] border-dashed border-black/10 bg-white shadow-sm shadow-slate-200/60">
+            <Card className="rounded-3xl border border-white/10 bg-white/[0.06] text-white shadow-xl shadow-black/10 backdrop-blur-xl">
               <CardContent className="p-5 md:p-6">
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-500">
                   Inventaire marque
@@ -1285,7 +1628,7 @@ if (currentScreen === "mission" && isAuthenticated) {
             </Card>
             )}
 
-            <Card className="rounded-[2rem] border-black/10 bg-white shadow-sm shadow-slate-200/60">
+            <Card className="rounded-[2rem] border border-white/10 bg-white/[0.06] text-white shadow-2xl shadow-black/20 backdrop-blur-xl">
               <CardContent className="p-5 md:p-6">
                 <div className="mb-5">
                   <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-500">Ajouter</p>
@@ -1402,7 +1745,7 @@ if (currentScreen === "mission" && isAuthenticated) {
               <StatCard icon={AlertTriangle} label="Critiques" value={stats.critical} helper="priorité haute" />
             </div>
 
-            <Card className="rounded-[2rem] border-black/10 bg-white shadow-sm shadow-slate-200/60">
+            <Card className="rounded-3xl border border-white/10 bg-white/[0.06] text-white shadow-xl shadow-black/10 backdrop-blur-xl">
               <CardContent className="p-5 md:p-6">
                 <div className="flex items-start justify-between gap-5">
                   <div>
@@ -1412,13 +1755,10 @@ if (currentScreen === "mission" && isAuthenticated) {
                   <div className="text-right text-4xl font-black tracking-[-0.06em]">{stats.progress}%</div>
                 </div>
                 <Progress value={stats.progress} className="mt-5 h-3" />
-                <p className="mt-4 text-sm font-medium leading-6 text-slate-500">
-                  Score basé sur les supports installés et validés. L’objectif : savoir en un coup d’œil si la marque est visible avant l’ouverture public.
-                </p>
               </CardContent>
             </Card>
 
-            <Card className="rounded-[2rem] border-black/10 bg-slate-950 text-white shadow-xl shadow-slate-300/50">
+            <Card className="rounded-[2rem] border border-white/10 bg-white/[0.055] text-white backdrop-blur-xl">
               <CardContent className="p-5 md:p-6">
                 <div className="mb-5 flex items-center justify-between gap-4">
                   <div>
