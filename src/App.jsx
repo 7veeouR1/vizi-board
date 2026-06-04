@@ -1,5 +1,6 @@
 import React, { useMemo, useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { jsPDF } from "jspdf";
 import {
   AlertTriangle,
   ArrowRight,
@@ -135,13 +136,6 @@ const defaultAssets = [];
 const DEMO_TERRAIN_TOKEN = "vizi-demo-token";
 
 const DEMO_PROVIDERS = [
-  {
-    id: "kevin-lefant",
-    email: "contact@kevinlefant.com",
-    password: "K7v!zB92xL",
-    name: "Kevin",
-  },
-
 {
   email: "demo@viziboard.fr",
   password: "demo123",
@@ -158,6 +152,7 @@ const defaultMissions = [
     installDate: "2026-06-17",
     status: "draft",
     statusLabel: "Brouillon",
+    mapPosition: { x: 48, y: 62 },
   },
   {
     id: "mission-demo-002",
@@ -167,6 +162,7 @@ const defaultMissions = [
     installDate: "2026-06-04",
     status: "submitted_by_installer",
     statusLabel: "À valider",
+    mapPosition: { x: 56, y: 48 },
   },
   {
     id: "mission-demo-003",
@@ -176,6 +172,7 @@ const defaultMissions = [
     installDate: "2026-07-12",
     status: "assigned",
     statusLabel: "Assignée",
+    mapPosition: { x: 42, y: 70 },
   },
   {
     id: "mission-demo-004",
@@ -185,6 +182,7 @@ const defaultMissions = [
     installDate: "2026-05-12",
     status: "validated_by_provider",
     statusLabel: "Validée",
+    mapPosition: { x: 40, y: 68 },
   },
 ];
 
@@ -460,6 +458,7 @@ export default function ViziBoardApp() {
   const [inventory] = useState(defaultInventory);
   const [mode, setMode] = useState("admin");
   const [missionCompleted, setMissionCompleted] = useState(false);
+  const [providerValidated, setProviderValidated] = useState(false);
   const [completionError, setCompletionError] = useState(""); 
   const [newAsset, setNewAsset] = useState({
     type: "Oriflamme",
@@ -615,18 +614,24 @@ const totalPhotos = assets.reduce(
   function addAssetPhoto(assetId, file) {
   if (!file) return;
 
-  const photoUrl = URL.createObjectURL(file);
+  const reader = new FileReader();
 
-  setAssets((current) =>
-    current.map((asset) =>
-      asset.id === assetId
-        ? {
-            ...asset,
-            photos: [...(asset.photos || []), photoUrl],
-          }
-        : asset
-    )
-  );
+  reader.onloadend = () => {
+    const photoBase64 = reader.result;
+
+    setAssets((current) =>
+      current.map((asset) =>
+        asset.id === assetId
+          ? {
+              ...asset,
+              photos: [...(asset.photos || []), photoBase64],
+            }
+          : asset
+      )
+    );
+  };
+
+  reader.readAsDataURL(file);
 }
 
   function updateProject(key, value) {
@@ -842,6 +847,278 @@ function getMissionCategory(mission) {
   }
 
   return "past";
+}
+
+function validateMissionByProvider() {
+  if (!missionCompleted) {
+    setCompletionError(
+      "Le monteur doit terminer le montage avant validation donneur."
+    );
+    return;
+  }
+
+  if (totalPhotos === 0) {
+    setCompletionError(
+      "Impossible de valider la mission sans preuve photo."
+    );
+    return;
+  }
+
+  setProviderValidated(true);
+  setCompletionError("");
+}
+
+async function generateMissionPdf() {
+  if (!providerValidated) {
+    setCompletionError(
+      "Valide d’abord la mission côté donneur avant de générer le PDF."
+    );
+    return;
+  }
+
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  let y = 18;
+
+  function addText(text, x, yPosition, options = {}) {
+    const {
+      size = 10,
+      style = "normal",
+      color = [30, 41, 59],
+      maxWidth = pageWidth - 28,
+    } = options;
+
+    doc.setFont("helvetica", style);
+    doc.setFontSize(size);
+    doc.setTextColor(...color);
+
+    const lines = doc.splitTextToSize(text || "-", maxWidth);
+    doc.text(lines, x, yPosition);
+
+    return yPosition + lines.length * (size * 0.42) + 3;
+  }
+
+  function addSectionTitle(title) {
+    if (y > pageHeight - 30) {
+      doc.addPage();
+      y = 18;
+    }
+
+    doc.setFillColor(249, 115, 22);
+    doc.roundedRect(14, y, 4, 4, 1, 1, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42);
+    doc.text(title, 22, y + 4);
+
+    y += 12;
+  }
+
+  function ensureSpace(requiredHeight = 35) {
+    if (y + requiredHeight > pageHeight - 16) {
+      doc.addPage();
+      y = 18;
+    }
+  }
+
+  // Header
+  doc.setFillColor(5, 11, 20);
+  doc.rect(0, 0, pageWidth, 38, "F");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(255, 255, 255);
+  doc.text("Vizi Board", 14, 18);
+
+  doc.setFontSize(10);
+  doc.setTextColor(180, 190, 205);
+  doc.text("Récapitulatif de mission terrain", 14, 27);
+
+  doc.setFillColor(249, 115, 22);
+  doc.roundedRect(pageWidth - 52, 12, 38, 11, 3, 3, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "bold");
+  doc.text("VALIDÉE", pageWidth - 42, 19);
+
+  y = 50;
+
+  // Mission
+  addSectionTitle("Informations mission");
+
+  y = addText(`Mission : ${project.eventName}`, 14, y, {
+    size: 12,
+    style: "bold",
+  });
+
+  y = addText(`Marque : ${selectedBrand?.name || "Non renseignée"}`, 14, y);
+  y = addText(`Lieu : ${project.location || "Non renseigné"}`, 14, y);
+  y = addText(
+    `Installation : ${project.installDate || "Date non renseignée"} avant ${
+      project.installDeadline || "heure non renseignée"
+    }`,
+    14,
+    y
+  );
+  y = addText(
+    `Contact organisateur : ${project.fieldContact || "Non renseigné"}`,
+    14,
+    y
+  );
+  y = addText(
+    `Monteur : ${selectedInstaller?.name || "Non assigné"}`,
+    14,
+    y
+  );
+
+  y += 4;
+
+  addSectionTitle("Objectif visibilité");
+
+  y = addText(project.objective || "Aucun objectif renseigné.", 14, y, {
+    maxWidth: pageWidth - 28,
+  });
+
+  y += 4;
+
+  addSectionTitle("Supports déployés");
+
+  if (assets.length === 0) {
+    y = addText("Aucun support ajouté à cette mission.", 14, y);
+  } else {
+    assets.forEach((asset, index) => {
+      ensureSpace(28);
+
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(14, y - 5, pageWidth - 28, 24, 3, 3, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${index + 1}. ${asset.name}`, 18, y + 1);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(
+        `Type : ${asset.type} | Qté : ${asset.quantity} | Zone : ${asset.zone} | Statut : ${
+          getStatus(asset.status).label
+        }`,
+        18,
+        y + 8
+      );
+
+      const noteLines = doc.splitTextToSize(
+        `Note : ${asset.note || "-"}`,
+        pageWidth - 40
+      );
+      doc.text(noteLines, 18, y + 15);
+
+      y += 30;
+    });
+  }
+
+  y += 2;
+
+  addSectionTitle("Commentaires mission");
+
+  if (!missionComments || missionComments.length === 0) {
+    y = addText("Aucun commentaire mission.", 14, y);
+  } else {
+    missionComments.forEach((comment) => {
+      ensureSpace(24);
+
+      y = addText(
+        `${comment.authorName} - ${comment.createdAt}`,
+        14,
+        y,
+        {
+          size: 9,
+          style: "bold",
+        }
+      );
+
+      y = addText(comment.message, 14, y, {
+        size: 9,
+        color: [71, 85, 105],
+      });
+
+      y += 2;
+    });
+  }
+
+  y += 4;
+
+  addSectionTitle("Preuves photo");
+
+  const proofPhotos = assets.flatMap((asset) =>
+    (asset.photos || []).map((photo) => ({
+      assetName: asset.name,
+      zone: asset.zone,
+      photo,
+    }))
+  );
+
+  if (proofPhotos.length === 0) {
+    y = addText("Aucune preuve photo ajoutée.", 14, y);
+  } else {
+    for (const proof of proofPhotos) {
+      ensureSpace(70);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${proof.assetName} - ${proof.zone}`, 14, y);
+
+      try {
+        doc.addImage(proof.photo, "JPEG", 14, y + 5, 80, 55);
+      } catch (error) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(220, 38, 38);
+        doc.text("Photo non compatible avec l’export PDF.", 14, y + 10);
+      }
+
+      y += 68;
+    }
+  }
+
+  // Footer
+  const totalPages = doc.internal.getNumberOfPages();
+
+  for (let page = 1; page <= totalPages; page += 1) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `Vizi Board - Rapport généré le ${new Intl.DateTimeFormat("fr-FR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date())}`,
+      14,
+      pageHeight - 10
+    );
+    doc.text(`${page}/${totalPages}`, pageWidth - 22, pageHeight - 10);
+  }
+
+  const safeName = (project.eventName || "mission")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-|-$/g, "");
+
+  doc.save(`vizi-board-${safeName}.pdf`);
 }
 
 if (currentScreen === "terrain") {
@@ -1100,8 +1377,6 @@ if (currentScreen === "login") {
             </form>
 
             <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-4 text-xs font-semibold leading-6 text-white/50">
-              Accès Kevin : contact@kevinlefant.com / K7v!zB92xL
-              <br />
               Accès démo : demo@viziboard.fr / demo123
             </div>
           </CardContent>
@@ -1152,6 +1427,73 @@ if (currentScreen === "dashboard" && isAuthenticated) {
             </Button>
           </div>
         </header>
+
+        <Card className="mt-6 overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.055] text-white backdrop-blur-xl">
+  <CardContent className="p-5 md:p-6">
+    <div className="mb-5 flex items-start justify-between gap-4">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+          Carte missions
+        </p>
+
+        <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
+          Déploiements terrain
+        </h2>
+
+        <p className="mt-2 text-sm font-semibold leading-6 text-white/45">
+          Vue rapide des missions planifiées, en cours ou à valider.
+        </p>
+      </div>
+
+      <Badge
+        variant="outline"
+        className="rounded-full border-white/10 bg-white/[0.06] text-white/60"
+      >
+        {missions.length} mission(s)
+      </Badge>
+    </div>
+
+    <div className="relative h-[360px] overflow-hidden rounded-[1.5rem] border border-white/10 bg-[#07111C]">
+      <div className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.12)_1px,transparent_1px)] bg-[size:22px_22px] opacity-35" />
+      <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.04),transparent)]" />
+
+      <div className="absolute left-[10%] top-[18%] text-xs font-black uppercase tracking-[0.18em] text-white/15">
+        Savoie
+      </div>
+
+      <div className="absolute bottom-[12%] right-[10%] text-xs font-black uppercase tracking-[0.18em] text-white/15">
+        Alpes
+      </div>
+
+      {missions
+        .filter((mission) => mission.mapPosition)
+        .map((mission) => (
+          <button
+            key={mission.id}
+            type="button"
+            onClick={() => openMission(mission.id)}
+            className="group absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
+            style={{
+              left: `${mission.mapPosition.x}%`,
+              top: `${mission.mapPosition.y}%`,
+            }}
+          >
+            <span className="relative flex h-4 w-4">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-40" />
+              <span className="relative inline-flex h-4 w-4 rounded-full border-2 border-white bg-orange-500" />
+            </span>
+
+            <span className="pointer-events-none mt-2 min-w-[180px] rounded-2xl border border-white/10 bg-black/75 px-3 py-2 text-left text-xs font-semibold text-white opacity-0 backdrop-blur-xl transition group-hover:opacity-100">
+              <span className="block font-black">{mission.eventName}</span>
+              <span className="mt-1 block text-white/50">
+                {mission.location} · {mission.statusLabel}
+              </span>
+            </span>
+          </button>
+        ))}
+    </div>
+  </CardContent>
+</Card>
 
         <Card className="mt-6 overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.055] text-white backdrop-blur-xl">
           <CardContent className="p-0">
@@ -1645,7 +1987,7 @@ if (currentScreen === "mission" && isAuthenticated) {
 
                   <div className="grid gap-3 md:grid-cols-3">
                     <Select value={newAsset.type} onValueChange={(value) => setNewAsset((current) => ({ ...current, type: value }))}>
-                      <SelectTrigger className="h-12 rounded-2xl border-black/10 bg-white font-semibold">
+                      <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
                         <SelectValue placeholder="Type" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1654,7 +1996,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                     </Select>
 
                     <Select value={newAsset.zone} onValueChange={(value) => setNewAsset((current) => ({ ...current, zone: value }))}>
-                      <SelectTrigger className="h-12 rounded-2xl border-black/10 bg-white font-semibold">
+                      <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
                         <SelectValue placeholder="Zone" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1663,7 +2005,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                     </Select>
 
                     <Select value={newAsset.priority} onValueChange={(value) => setNewAsset((current) => ({ ...current, priority: value }))}>
-                      <SelectTrigger className="h-12 rounded-2xl border-black/10 bg-white font-semibold">
+                      <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
                         <SelectValue placeholder="Priorité" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1679,7 +2021,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                       placeholder="Qté"
                       type="number"
                       min="1"
-                      className="h-12 rounded-2xl border-black/10 bg-white font-semibold"
+                      className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl"
                     />
                     <Input
                       value={newAsset.note}
@@ -1879,6 +2221,66 @@ if (currentScreen === "mission" && isAuthenticated) {
                 </div>
               </CardContent>
             </Card>
+
+            {currentScreen === "mission" && (
+              <Card className="rounded-[2rem] border border-white/10 bg-[#0B1624]/85 text-white backdrop-blur-xl">
+                <CardContent className="p-5 md:p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                        Validation donneur
+                      </p>
+
+                      <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
+                        Rapport marque
+                      </h2>
+
+                      <p className="mt-2 text-sm font-semibold leading-6 text-white/50">
+                        Vérifie les preuves terrain, valide la mission, puis génère le PDF récapitulatif à envoyer à la marque.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        type="button"
+                        onClick={validateMissionByProvider}
+                        disabled={!missionCompleted}
+                        className="rounded-full bg-white font-black text-slate-950 hover:bg-orange-500 hover:text-white disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/35"
+                      >
+                        Valider donneur
+                      </Button>
+
+                      <Button
+                        type="button"
+                        onClick={generateMissionPdf}
+                        disabled={!providerValidated}
+                        className="rounded-full bg-orange-500 font-black text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/35"
+                      >
+                        Générer PDF
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!missionCompleted && (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm font-semibold text-white/45">
+                      En attente de soumission terrain par le monteur.
+                    </div>
+                  )}
+
+                  {missionCompleted && !providerValidated && (
+                    <div className="mt-4 rounded-2xl border border-orange-400/20 bg-orange-500/10 p-4 text-sm font-semibold text-orange-200">
+                      Mission soumise par le monteur. Validation donneur requise avant génération du PDF.
+                    </div>
+                  )}
+
+                  {providerValidated && (
+                    <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm font-semibold text-emerald-200">
+                      Mission validée par le donneur. Le PDF récapitulatif peut être généré.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
               {mode === "terrain" && isTerrainAccessGranted && (
                 <Card className="rounded-[2rem] border-black/10 bg-white shadow-sm shadow-slate-200/60">
