@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { supabase } from "./lib/supabase";
 
 const statusOptions = [
   { value: "charge", label: "Chargé", color: "bg-blue-50 text-blue-700 border-blue-100" },
@@ -48,18 +49,6 @@ const priorityOptions = [
 
 const assetTypes = ["Arche", "Bâche", "Oriflamme", "Kakémono", "Photocall", "Panneau", "Stand", "Sticker sol"];
 const zones = ["Entrée", "Accueil", "Scène", "Parcours", "Village partenaires", "Zone VIP", "Restauration", "Parking"];
-
-const defaultBrands = [
-  {
-    id: "explore-savoie",
-    name: "Explore Savoie",
-    contactName: "Équipe Explore Savoie",
-    contactEmail: "contact@explore-savoie.fr",
-    logo: "/brands/explore-savoie-logo.png",
-    notes:
-      "Marque test pour la saison. Objectif : suivre les déploiements terrain et produire des preuves propres après installation.",
-  },
-];
 
 const defaultInventory = [
   {
@@ -104,21 +93,8 @@ const defaultInventory = [
   },
 ];
 
-const defaultInstallers = [
-  {
-    id: "kilian-combey",
-    name: "Kilian Combey",
-    phone: "06 00 00 00 00",
-  },
-  {
-    id: "kevin-lefant",
-    name: "Kevin Lefant",
-    phone: "07 63 50 48 22",
-  },
-];
-
 const defaultProject = {
-  id: "mission-demo-001",
+  id: "",
   eventName: "",
   brandId: "",
   location: "",
@@ -126,8 +102,7 @@ const defaultProject = {
   installDate: "",
   installDeadline: "",
   fieldContact: "",
-  objective:
-    "Déployer la visibilité Explore Savoie sur les zones de passage, sécuriser les supports installés et produire des preuves photo exploitables pour le récap marque.",
+  objective:"",
   installerId: "",
 };
 
@@ -135,13 +110,11 @@ const defaultAssets = [];
 
 const DEMO_TERRAIN_TOKEN = "vizi-demo-token";
 
-const DEMO_PROVIDERS = [
-{
-  email: "demo@viziboard.fr",
-  password: "demo123",
-  name: "Prestataire Vizi Board",
-},
-];
+function isValidUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
 
 const defaultMissions = [
   {
@@ -440,6 +413,19 @@ function MissionSection({ title, helper, missions, onOpenMission }) {
   );
 }
 
+function getMissionStatusLabel(status) {
+  const labels = {
+    draft: "Brouillon",
+    assigned: "Assignée",
+    in_progress: "En cours",
+    submitted_by_installer: "À valider",
+    validated_by_provider: "Validée",
+    report_sent: "Rapport envoyé",
+  };
+
+  return labels[status] || "Brouillon";
+}
+
 export default function ViziBoardApp() {
 
   const [currentScreen, setCurrentScreen] = useState("login");
@@ -454,7 +440,7 @@ export default function ViziBoardApp() {
 
   const [project, setProject] = useState(defaultProject);
   const [assets, setAssets] = useState(defaultAssets);
-  const [brands] = useState(defaultBrands);
+  const [brands, setBrands] = useState([]);
   const [inventory] = useState(defaultInventory);
   const [mode, setMode] = useState("admin");
   const [missionCompleted, setMissionCompleted] = useState(false);
@@ -479,15 +465,18 @@ const [missionComment, setMissionComment] = useState("");
 
 const [missionComments, setMissionComments] = useState([]);
 
-const [installers] = useState(defaultInstallers);
+const [installers, setInstallers] = useState([]);
 
 const [currentUser, setCurrentUser] = useState(null);
+
+console.log("BRANDS STATE:", brands);
+console.log("PROJECT BRAND ID:", project.brandId);
 
 const selectedInstaller = useMemo(() => {
   return installers.find((installer) => installer.id === project.installerId) || null;
 }, [installers, project.installerId]);
 
-  const stats = useMemo(() => {
+const stats = useMemo(() => {
     const total = assets.length;
     const installed = assets.filter((asset) => ["installe", "valide", "recupere"].includes(asset.status)).length;
     const validated = assets.filter((asset) => asset.status === "valide").length;
@@ -497,23 +486,23 @@ const selectedInstaller = useMemo(() => {
     return { total, installed, validated, critical, progress };
   }, [assets]);
 
-  const groupedByZone = useMemo(() => {
+const groupedByZone = useMemo(() => {
     return zones
       .map((zone) => ({ zone, assets: assets.filter((asset) => asset.zone === zone) }))
       .filter((group) => group.assets.length > 0);
   }, [assets]);
 
-  const selectedBrand = useMemo(() => {
+const selectedBrand = useMemo(() => {
   return brands.find((brand) => brand.id === project.brandId) || null;
 }, [brands, project.brandId]);
 
-  const brandInventory = useMemo(() => {
+const brandInventory = useMemo(() => {
   if (!project.brandId) return [];
 
   return inventory.filter((item) => item.brandId === project.brandId);
 }, [inventory, project.brandId]);
 
-  const filteredBrandInventory = useMemo(() => {
+const filteredBrandInventory = useMemo(() => {
   const search = inventorySelection.search.trim().toLowerCase();
 
   if (!search) return brandInventory;
@@ -610,6 +599,45 @@ const totalPhotos = assets.reduce(
   (total, asset) => total + (asset.photos?.length || 0),
   0
   );
+
+useEffect(() => {
+  async function loadSession() {
+    const { data } = await supabase.auth.getSession();
+    const session = data.session;
+
+    if (!session?.user) return;
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", session.user.id)
+      .single();
+
+    setCurrentUser({
+      id: session.user.id,
+      email: session.user.email,
+      name: profile?.full_name || session.user.email,
+      role: profile?.role || "provider",
+    });
+
+    setIsAuthenticated(true);
+
+    if (!hasTerrainParams) {
+      setCurrentScreen("dashboard");
+    }
+  }
+
+  loadSession();
+}, [hasTerrainParams]);
+
+
+useEffect(() => {
+  if (isAuthenticated && currentUser?.id) {
+    loadMissions(currentUser.id);
+    loadBrands(currentUser.id);
+    loadInstallers(currentUser.id);
+  }
+}, [isAuthenticated, currentUser?.id]);
 
   function addAssetPhoto(assetId, file) {
   if (!file) return;
@@ -764,67 +792,144 @@ const totalPhotos = assets.reduce(
   }));
 }
 
-function handleLogin(event) {
+async function handleLogin(event) {
   event.preventDefault();
+  setLoginError("");
 
-  const user = DEMO_PROVIDERS.find(
-    (provider) =>
-      provider.email === loginForm.email.trim() &&
-      provider.password === loginForm.password
-  );
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: loginForm.email.trim(),
+    password: loginForm.password,
+  });
 
-  if (!user) {
+  if (error) {
     setLoginError("Identifiants incorrects.");
     return;
   }
 
-  setCurrentUser(user);
+  const user = data.user;
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .single();
+
+  setCurrentUser({
+    id: user.id,
+    email: user.email,
+    name: profile?.full_name || user.email,
+    role: profile?.role || "provider",
+  });
+
   setIsAuthenticated(true);
-  setLoginError("");
   setCurrentScreen("dashboard");
 }
 
-function logout() {
+async function logout() {
+  await supabase.auth.signOut();
+
   setCurrentUser(null);
   setIsAuthenticated(false);
   setCurrentScreen("login");
   setLoginForm({ email: "", password: "" });
 }
 
-function openMission(missionId) {
-  setActiveMissionId(missionId);
-  setCurrentScreen("mission");
-}
+async function openMission(missionId) {
+  if (!currentUser?.id) return;
 
-function createNewMission() {
-  const missionId = `mission-${Date.now()}`;
+  const { data, error } = await supabase
+    .from("missions")
+    .select("*")
+    .eq("id", missionId)
+    .eq("owner_id", currentUser.id)
+    .single();
 
-  const newMission = {
-    id: missionId,
-    eventName: "Nouvelle mission",
-    brandName: "Non définie",
-    location: "Lieu à définir",
-    installDate: "",
-    status: "draft",
-    statusLabel: "Brouillon",
-  };
-
-  setMissions((current) => [newMission, ...current]);
+  if (error) {
+    console.error("Erreur ouverture mission :", error);
+    return;
+  }
 
   setProject({
     ...defaultProject,
-    id: missionId,
-    eventName: "Nouvelle mission",
-    brandId: "",
-    installerId: "",
-    location: "",
-    fieldContact: "",
-    objective: "",
+    id: data.id,
+    eventName: data.event_name || "",
+    brandId: data.brand_id || "",
+    installerId: data.installer_id || "",
+    location: data.location || "",
+    date: data.event_date || "",
+    installDate: data.install_date || "",
+    installDeadline: data.install_deadline || "",
+    fieldContact: data.field_contact || "",
+    objective: data.objective || "",
+    terrainToken: data.terrain_token,
   });
 
   setAssets([]);
-  setActiveMissionId(missionId);
+  setActiveMissionId(data.id);
   setCurrentScreen("mission");
+}
+
+async function createNewMission() {
+  const { data: sessionData, error: sessionError } =
+    await supabase.auth.getSession();
+
+  if (sessionError) {
+    console.error("Erreur session :", sessionError);
+    return;
+  }
+
+  const userId = sessionData.session?.user?.id;
+
+  if (!userId) {
+    console.error("Aucune session Supabase active");
+    setCurrentScreen("login");
+    return;
+  }
+
+  const payload = {
+    owner_id: userId,
+    event_name: "Nouvelle mission",
+    location: "",
+    install_date: null,
+    install_deadline: null,
+    field_contact: "",
+    objective: "",
+    status: "draft",
+  };
+
+  console.log("CREATE MISSION PAYLOAD:", payload);
+
+  const { data, error } = await supabase
+    .from("missions")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Erreur création mission :", error);
+    return;
+  }
+
+  setProject({
+    ...defaultProject,
+    id: data.id,
+    eventName: data.event_name,
+    brandId: data.brand_id || "",
+    installerId: data.installer_id || "",
+    location: data.location || "",
+    date: "",
+    installDate: data.install_date || "",
+    installDeadline: data.install_deadline || "",
+    fieldContact: data.field_contact || "",
+    objective: data.objective || "",
+    terrainToken: data.terrain_token,
+  });
+
+  setAssets([]);
+  setActiveMissionId(data.id);
+  setCurrentScreen("mission");
+
+  await loadMissions(userId);
 }
 
 function getMissionCategory(mission) {
@@ -1121,6 +1226,114 @@ async function generateMissionPdf() {
   doc.save(`vizi-board-${safeName}.pdf`);
 }
 
+async function loadMissions(userId = currentUser?.id) {
+  if (!userId) return;
+
+  const { data, error } = await supabase
+    .from("missions")
+    .select(`
+      id,
+      event_name,
+      location,
+      install_date,
+      status,
+      terrain_token,
+      brands(name),
+      installers(name)
+    `)
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("Erreur chargement missions :", error);
+    return;
+  }
+
+  const formattedMissions = data.map((mission) => ({
+    id: mission.id,
+    eventName: mission.event_name || "Mission sans nom",
+    brandName: mission.brands?.name || "Marque non définie",
+    location: mission.location || "Lieu à définir",
+    installDate: mission.install_date || "",
+    status: mission.status || "draft",
+    statusLabel: getMissionStatusLabel(mission.status),
+    terrainToken: mission.terrain_token,
+  }));
+
+  setMissions(formattedMissions);
+}
+
+async function saveMissionToSupabase() {
+  if (!project.id || !currentUser?.id) return;
+
+  const payload = {
+    event_name: project.eventName || "Mission sans nom",
+    brand_id: isValidUuid(project.brandId) ? project.brandId : null,
+    installer_id: isValidUuid(project.installerId) ? project.installerId : null,
+    location: project.location || "",
+    install_date: project.installDate || null,
+    install_deadline: project.installDeadline || null,
+    field_contact: project.fieldContact || "",
+    objective: project.objective || "",
+    status: isValidUuid(project.installerId) ? "assigned" : "draft",
+  };
+
+  const { data, error } = await supabase
+    .from("missions")
+    .update(payload)
+    .eq("id", project.id)
+    .eq("owner_id", currentUser.id)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Erreur sauvegarde mission :", error);
+    return;
+  }
+
+  console.log("Mission enregistrée :", data);
+
+  await loadMissions(currentUser.id);
+
+  setCurrentScreen("dashboard");
+}
+
+async function loadBrands(userId = currentUser?.id) {
+  if (!userId) return;
+
+  const { data, error } = await supabase
+    .from("brands")
+    .select("*")
+    .eq("owner_id", userId)
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Erreur chargement marques :", error);
+    return;
+  }
+
+  console.log("BRANDS LOADED:", data);
+  setBrands(data || []);
+}
+
+async function loadInstallers(userId = currentUser?.id) {
+  if (!userId) return;
+
+  const { data, error } = await supabase
+    .from("installers")
+    .select("*")
+    .eq("owner_id", userId)
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Erreur chargement monteurs :", error);
+    return;
+  }
+
+  console.log("INSTALLERS LOADED:", data);
+  setInstallers(data || []);
+}
+
 if (currentScreen === "terrain") {
   if (!isTerrainLink) {
     return (
@@ -1375,10 +1588,6 @@ if (currentScreen === "login") {
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </form>
-
-            <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-4 text-xs font-semibold leading-6 text-white/50">
-              Accès démo : demo@viziboard.fr / demo123
-            </div>
           </CardContent>
         </Card>
       </section>
@@ -1642,6 +1851,14 @@ if (currentScreen === "mission" && isAuthenticated) {
               Retour missions
             </Button>
 
+            <Button
+              type="button"
+              onClick={saveMissionToSupabase}
+              className="rounded-full bg-orange-500 font-black text-white hover:bg-orange-600"
+            >
+              Enregistrer
+            </Button>
+
             {mode === "admin" && (
               <Button
                 onClick={resetDemo}
@@ -1683,16 +1900,23 @@ if (currentScreen === "mission" && isAuthenticated) {
                         </span>
 
                         <Select
-                          value={project.brandId}
+                          value={project.brandId || ""}
                           onValueChange={(value) => updateProject("brandId", value)}
                         >
-                          <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
+                          <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-[#101826] text-white font-semibold">
                             <SelectValue placeholder="Sélectionner une marque" />
                           </SelectTrigger>
-                          <SelectContent>
+
+                          <SelectContent
+                            className="z-50 rounded-2xl border border-white/10 bg-[#0D1522] p-2 text-white shadow-2xl"
+                            position="popper"
+                          >
                             {brands.map((brand) => (
-                              <SelectItem key={brand.id} value={brand.id}>
-                                {brand.name}
+                              <SelectItem
+                                key={brand.id}
+                                value={brand.id}
+                                className="rounded-xl px-3 py-2 !text-white focus:!bg-[#182538] focus:!text-white data-[highlighted]:!bg-[#182538] data-[highlighted]:!text-white data-[state=checked]:!bg-[#1F2D42] data-[state=checked]:!text-white">
+                                  <span className="!text-white">{brand.name}</span>
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1719,20 +1943,31 @@ if (currentScreen === "mission" && isAuthenticated) {
                       Monteur assigné
                     </span>
 
-                    <Select value={project.installerId} onValueChange={assignInstaller}>
-                      <SelectTrigger className="h-12 rounded-2xl border-white/10 bg-black/100 text-white font-semibold backdrop-blur-xl">
+                    <Select
+                      value={project.installerId || ""}
+                      onValueChange={(value) => updateProject("installerId", value)}
+                    >
+                      <SelectTrigger className="h-12 rounded-2xl border border-white/10 bg-[#0D1522]/80 text-white font-semibold backdrop-blur-xl">
                         <SelectValue placeholder="Sélectionner un monteur" />
                       </SelectTrigger>
 
-                      <SelectContent>
+                      <SelectContent
+                        className="z-50 rounded-2xl border border-white/10 bg-[#0D1522] p-2 text-white shadow-2xl"
+                        position="popper"
+                      >
                         {installers.map((installer) => (
-                          <SelectItem key={installer.id} value={installer.id}>
-                            {installer.name}
+                          <SelectItem
+                            key={installer.id}
+                            value={installer.id}
+                            className="rounded-xl px-3 py-2 !text-white focus:!bg-[#182538] data-[highlighted]:!bg-[#182538]"
+                          >
+                            <span className="!text-white">
+                              {installer.name}
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-
                     {selectedInstaller && (
                       <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm font-semibold leading-6 text-slate-600">
                         <a
