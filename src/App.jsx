@@ -295,13 +295,14 @@ function AssetCard({ asset, mode, onStatusChange, onDelete, onPhotoUpload }) {
                   <Camera className="h-4 w-4" />
                   Ajouter une photo
                   <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) =>
-                      onPhotoUpload(asset.id, event.target.files?.[0])
-                    }
-                    className="hidden"
-                  />
+  type="file"
+  accept="image/*"
+  onChange={(event) => {
+    console.log("FILE INPUT CHANGE", event.target.files?.[0]);
+    onPhotoUpload(asset.id, event.target.files?.[0]);
+  }}
+  className="hidden"
+/>
                 </label>
               )}
             </div>
@@ -679,27 +680,62 @@ useEffect(() => {
   console.log("ASSETS STATE UPDATED:", assets);
 }, [assets]);
 
-  function addAssetPhoto(assetId, file) {
-  if (!file) return;
+ async function addAssetPhoto(assetId, file) {
+  if (!file || !project.id) return;
 
-  const reader = new FileReader();
+  const fileExt = file.name.split(".").pop();
+  const fileName = `${project.id}/${assetId}-${Date.now()}.${fileExt}`;
 
-  reader.onloadend = () => {
-    const photoBase64 = reader.result;
+  const { error: uploadError } = await supabase.storage
+    .from("mission-photos")
+    .upload(fileName, file);
 
-    setAssets((current) =>
-      current.map((asset) =>
-        asset.id === assetId
-          ? {
-              ...asset,
-              photos: [...(asset.photos || []), photoBase64],
-            }
-          : asset
-      )
-    );
-  };
+  if (uploadError) {
+    console.error("Erreur upload photo :", uploadError);
+    return;
+  }
 
-  reader.readAsDataURL(file);
+  const { data: publicUrlData } = supabase.storage
+    .from("mission-photos")
+    .getPublicUrl(fileName);
+
+  const photoUrl = publicUrlData.publicUrl;
+
+  const { data, error } = await supabase
+    .from("mission_photos")
+    .insert({
+      mission_id: project.id,
+      mission_item_id: assetId,
+      photo_url: photoUrl,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Erreur enregistrement photo :", error);
+    return;
+  }
+
+  const { error: statusError } = await supabase
+    .from("mission_items")
+    .update({ status: "installe" })
+    .eq("id", assetId);
+
+  if (statusError) {
+    console.error("Erreur passage support en installé :", statusError);
+  }
+
+  setAssets((current) =>
+    current.map((asset) =>
+      asset.id === assetId
+        ? {
+            ...asset,
+            status: "installe",
+            photos: [...(asset.photos || []), data.photo_url],
+          }
+        : asset
+    )
+  );
 }
 
   function updateProject(key, value) {
@@ -1508,24 +1544,28 @@ async function loadInventoryByBrand(brandId) {
   setInventory(formattedInventory);
 }
 async function loadMissionItems(missionId) {
-  console.log("LOAD MISSION ITEMS FOR:", missionId);
-
   if (!missionId) return;
 
   const { data, error } = await supabase
     .from("mission_items")
-    .select(`*, mission_photos(photo_url)`)
+    .select(`
+      *,
+      mission_photos (
+        id,
+        photo_url,
+        created_at
+      )
+    `)
     .eq("mission_id", missionId)
     .order("created_at", { ascending: false });
-
-  console.log("MISSION ITEMS DATA:", data);
-  console.log("MISSION ITEMS ERROR:", error);
 
   if (error) {
     console.error("Erreur chargement supports mission :", error);
     setAssets([]);
     return;
   }
+
+  console.log("MISSION ITEMS WITH PHOTOS:", data);
 
   const formattedAssets = (data || []).map((item) => ({
     id: item.id,
@@ -1541,7 +1581,6 @@ async function loadMissionItems(missionId) {
     photos: (item.mission_photos || []).map((photo) => photo.photo_url),
   }));
 
-  console.log("FORMATTED ASSETS:", formattedAssets);
   setAssets(formattedAssets);
 }
 
