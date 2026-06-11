@@ -211,6 +211,8 @@ function AssetCard({ asset, mode, onStatusChange, onDelete, onPhotoUpload }) {
   const status = getStatus(asset.status);
   const isCritical = asset.priority === "haute" && asset.status !== "valide" && asset.status !== "recupere";
 
+  console.log("ASSET PHOTOS:", asset.name, asset.photos);
+
   return (
     <Card className="rounded-3xl border-black/10 bg-white shadow-sm shadow-slate-200/60">
       <CardContent className="p-5">
@@ -276,46 +278,54 @@ function AssetCard({ asset, mode, onStatusChange, onDelete, onPhotoUpload }) {
 
         <p className="mt-4 text-sm font-medium leading-6 text-slate-500">{asset.note}</p>
 
-        <div className="mt-4 rounded-3xl border border-black/10 bg-slate-50 p-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-black text-slate-950">
-                Photos de validation
+        {(mode === "terrain" || asset.photos?.length > 0) && (
+          <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-black text-white">
+                  Photos terrain
+                </div>
+                <div className="text-xs font-semibold text-white/45">
+                  Preuves envoyées par le monteur.
+                </div>
               </div>
-              <div className="text-xs font-semibold text-slate-500">
-                Ajoutez une preuve photo du montage.
-              </div>
+
+              {mode === "terrain" && (
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-orange-500 px-4 py-2 text-xs font-black text-white transition hover:bg-orange-600">
+                  <Camera className="h-4 w-4" />
+                  Ajouter une photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) =>
+                      onPhotoUpload(asset.id, event.target.files?.[0])
+                    }
+                    className="hidden"
+                  />
+                </label>
+              )}
             </div>
 
-            <label className="cursor-pointer rounded-full bg-slate-950 px-4 py-2 text-xs font-black text-white transition hover:bg-orange-500">
-              Ajouter
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(event) => onPhotoUpload(asset.id, event.target.files?.[0])}
-              />
-            </label>
+            {asset.photos?.length > 0 ? (
+              <div className="grid grid-cols-3 gap-2">
+                {asset.photos.map((photo, index) => (
+                  <img
+                    key={index}
+                    src={photo}
+                    alt={`Photo terrain ${index + 1}`}
+                    className="h-24 w-full rounded-2xl object-cover"
+                  />
+                ))}
+              </div>
+            ) : (
+              mode === "terrain" && (
+                <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.04] p-4 text-sm font-semibold text-white/40">
+                  Aucune photo ajoutée.
+                </div>
+              )
+            )}
           </div>
-
-          {asset.photos?.length > 0 ? (
-            <div className="grid grid-cols-3 gap-2">
-              {asset.photos.map((photo, index) => (
-                <img
-                  key={index}
-                  src={photo}
-                  alt={`Photo de validation ${index + 1}`}
-                  className="h-24 w-full rounded-2xl object-cover"
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4 text-sm font-semibold text-slate-400">
-              Aucune photo ajoutée.
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
           {statusOptions.map((option) => (
@@ -580,6 +590,13 @@ const groupedMissions = useMemo(() => {
 
 const isTerrainAccessGranted = mode === "terrain" && isTerrainLink;
 
+const doneCount = assets.filter((asset) =>
+  ["installe", "valide", "recupere"].includes(asset.status)
+).length;
+
+const progress =
+  assets.length > 0 ? Math.round((doneCount / assets.length) * 100) : 0;
+
 useEffect(() => {
   async function handleTerrainAccess() {
     if (!hasTerrainParams) return;
@@ -689,9 +706,23 @@ useEffect(() => {
     setProject((current) => ({ ...current, [key]: value }));
   }
 
-  function updateAssetStatus(assetId, status) {
-    setAssets((current) => current.map((asset) => (asset.id === assetId ? { ...asset, status } : asset)));
+  async function updateAssetStatus(assetId, status) {
+  const { error } = await supabase
+    .from("mission_items")
+    .update({ status })
+    .eq("id", assetId);
+
+  if (error) {
+    console.error("Erreur update statut support :", error);
+    return;
   }
+
+  setAssets((current) =>
+    current.map((asset) =>
+      asset.id === assetId ? { ...asset, status } : asset
+    )
+  );
+}
 
   function deleteAsset(assetId) {
   setAssets((current) => current.filter((asset) => asset.id !== assetId));
@@ -829,16 +860,51 @@ useEffect(() => {
   setMissionComment("");
 }
 
-  function completeMission() {
+  async function completeMission() {
+  if (!project.id) return;
+
   if (totalPhotos === 0) {
-    setCompletionError(
-      "Ajoutez au moins une photo de validation avant de terminer le montage."
-    );
+    setCompletionError("Ajoute au moins une photo avant de soumettre la mission.");
     return;
   }
 
+  const { error: itemsError } = await supabase
+    .from("mission_items")
+    .update({ status: "installe" })
+    .eq("mission_id", project.id);
+
+  if (itemsError) {
+    console.error("Erreur update supports :", itemsError);
+    setCompletionError("Impossible de mettre à jour les supports.");
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("missions")
+    .update({
+      status: "submitted_by_installer",
+      terrain_submitted_at: new Date().toISOString(),
+    })
+    .eq("id", project.id)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Erreur soumission mission :", error);
+    setCompletionError("Impossible de soumettre la mission.");
+    return;
+  }
+
+  await loadMissionItems(project.id);
+
   setMissionCompleted(true);
   setCompletionError("");
+
+  setProject((current) => ({
+    ...current,
+    status: data.status,
+    terrainSubmittedAt: data.terrain_submitted_at,
+  }));
 }
 
   function assignInstaller(installerId) {
@@ -924,6 +990,9 @@ async function openMission(missionId) {
   fieldContactPhone: data.field_contact_phone || "",
   objective: data.objective || "",
   terrainToken: data.terrain_token,
+  status: data.status || "draft",
+  terrainSubmittedAt: data.terrain_submitted_at || "",
+  providerValidatedAt: data.provider_validated_at || "",
 });
 
   await loadMissionItems(data.id);
@@ -1445,7 +1514,7 @@ async function loadMissionItems(missionId) {
 
   const { data, error } = await supabase
     .from("mission_items")
-    .select("*")
+    .select(`*, mission_photos(photo_url)`)
     .eq("mission_id", missionId)
     .order("created_at", { ascending: false });
 
@@ -1469,7 +1538,7 @@ async function loadMissionItems(missionId) {
     status: item.status,
     note: item.note,
     referencePhoto: item.reference_photo_url,
-    photos: [],
+    photos: (item.mission_photos || []).map((photo) => photo.photo_url),
   }));
 
   console.log("FORMATTED ASSETS:", formattedAssets);
@@ -1512,6 +1581,9 @@ async function restoreActiveMission(userId) {
     fieldContactPhone: data.field_contact_phone || "",
     objective: data.objective || "",
     terrainToken: data.terrain_token,
+    status: data.status || "draft",
+    terrainSubmittedAt: data.terrain_submitted_at || "",
+    providerValidatedAt: data.provider_validated_at || "",
   });
 
   await loadMissionItems(data.id);
@@ -1561,12 +1633,43 @@ async function loadTerrainMissionByToken(token) {
     brandName: data.brands?.name || "",
     installerName: data.installers?.name || "",
     installerPhone: data.installers?.phone || "",
+    status: data.status || "draft",
+    terrainSubmittedAt: data.terrain_submitted_at || "",
+    providerValidatedAt: data.provider_validated_at || "",
   });
 
   await loadMissionItems(data.id);
 
   setActiveMissionId(data.id);
   return true;
+}
+
+async function validateMissionByProvider() {
+  if (!project.id) return;
+
+  const { data, error } = await supabase
+    .from("missions")
+    .update({
+      status: "validated_by_provider",
+      provider_validated_at: new Date().toISOString(),
+    })
+    .eq("id", project.id)
+    .eq("owner_id", currentUser.id)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Erreur validation donneur :", error);
+    return;
+  }
+
+  setProject((current) => ({
+    ...current,
+    status: data.status,
+    providerValidatedAt: data.provider_validated_at,
+  }));
+
+  await loadMissions(currentUser.id);
 }
 
 if (currentScreen === "terrain") {
@@ -2103,7 +2206,11 @@ if (currentScreen === "mission" && isAuthenticated) {
 
             <Button
               type="button"
-              onClick={() => setCurrentScreen("dashboard")}
+              onClick={async () => {
+                localStorage.removeItem(ACTIVE_MISSION_STORAGE_KEY);
+                await loadMissions(currentUser.id);
+                setCurrentScreen("dashboard");
+              }}
               variant="secondary"
               className="rounded-full bg-white/10 text-white hover:bg-white/15"
             >
@@ -2591,7 +2698,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                   </div>
                   <div className="text-right text-4xl font-black tracking-[-0.06em]">{stats.progress}%</div>
                 </div>
-                <Progress value={stats.progress} className="mt-5 h-3" />
+                <Progress value={progress} className="mt-4 h-2" />
               </CardContent>
             </Card>
 
@@ -2777,6 +2884,32 @@ if (currentScreen === "mission" && isAuthenticated) {
               </Card>
             )}
 
+            {project.status === "submitted_by_installer" && (
+              <Card className="rounded-[2rem] border border-orange-400/20 bg-orange-500/10 text-white backdrop-blur-xl">
+                <CardContent className="p-5 md:p-6">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-300">
+                    Validation donneur
+                  </p>
+
+                  <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
+                    Mission soumise par le monteur
+                  </h2>
+
+                  <p className="mt-2 text-sm font-semibold leading-6 text-white/60">
+                    Vérifie les supports et les preuves photo avant validation finale.
+                  </p>
+
+                  <Button
+                    type="button"
+                    onClick={validateMissionByProvider}
+                    className="mt-5 rounded-full bg-white font-black text-slate-950 hover:bg-orange-500 hover:text-white"
+                  >
+                    Valider la mission
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
               {mode === "terrain" && isTerrainAccessGranted && (
                 <Card className="rounded-[2rem] border-black/10 bg-white shadow-sm shadow-slate-200/60">
                   <CardContent className="p-5">
@@ -2939,7 +3072,7 @@ if (currentScreen === "mission" && isAuthenticated) {
                         </div>
                       </div>
 
-                      <Progress value={zoneProgress} className="mt-4 h-2" />
+                      <Progress value={progress} className="mt-4 h-2" />
 
                       <div className="mt-4 space-y-2">
                         {group.assets.map((asset) => (
