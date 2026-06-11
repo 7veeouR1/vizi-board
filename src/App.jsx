@@ -102,6 +102,7 @@ const defaultProject = {
   installDate: "",
   installDeadline: "",
   fieldContact: "",
+  fieldContactPhone: "",
   objective:"",
   installerId: "",
 };
@@ -158,6 +159,8 @@ const defaultMissions = [
     mapPosition: { x: 40, y: 68 },
   },
 ];
+
+const ACTIVE_MISSION_STORAGE_KEY = "vizi-board-active-mission-id";
 
 function getStatus(status) {
   return statusOptions.find((option) => option.value === status) || statusOptions[0];
@@ -441,7 +444,7 @@ export default function ViziBoardApp() {
   const [project, setProject] = useState(defaultProject);
   const [assets, setAssets] = useState(defaultAssets);
   const [brands, setBrands] = useState([]);
-  const [inventory] = useState(defaultInventory);
+  const [inventory, setInventory] = useState([]);
   const [mode, setMode] = useState("admin");
   const [missionCompleted, setMissionCompleted] = useState(false);
   const [providerValidated, setProviderValidated] = useState(false);
@@ -496,11 +499,7 @@ const selectedBrand = useMemo(() => {
   return brands.find((brand) => brand.id === project.brandId) || null;
 }, [brands, project.brandId]);
 
-const brandInventory = useMemo(() => {
-  if (!project.brandId) return [];
-
-  return inventory.filter((item) => item.brandId === project.brandId);
-}, [inventory, project.brandId]);
+const brandInventory = inventory;
 
 const filteredBrandInventory = useMemo(() => {
   const search = inventorySelection.search.trim().toLowerCase();
@@ -536,34 +535,28 @@ const fieldBrief = useMemo(() => {
     };
   }, [assets]);
 
+
+
 const urlParams = useMemo(() => {
   if (typeof window === "undefined") {
     return {
-      missionId: "",
-      installerId: "",
-      token: "",
+      terrainToken: "",
     };
   }
 
-const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(window.location.search);
 
   return {
-    missionId: params.get("missionId") || "",
-    installerId: params.get("installerId") || "",
-    token: params.get("token") || "",
+    terrainToken: params.get("terrainToken") || "",
   };
 }, []);
 
-const hasTerrainParams =
-  !!urlParams.missionId && !!urlParams.installerId && !!urlParams.token;
+const hasTerrainParams = !!urlParams.terrainToken;
 
-const isTerrainLink =
-  urlParams.missionId === project.id &&
-  urlParams.installerId === project.installerId &&
-  urlParams.token === DEMO_TERRAIN_TOKEN;
+
 
 const terrainLink = useMemo(() => {
-  if (!selectedInstaller) return "";
+  if (!project.terrainToken) return "";
 
   const baseUrl =
     typeof window !== "undefined"
@@ -571,13 +564,11 @@ const terrainLink = useMemo(() => {
       : "";
 
   const params = new URLSearchParams({
-    missionId: project.id,
-    installerId: selectedInstaller.id,
-    token: DEMO_TERRAIN_TOKEN,
+    terrainToken: project.terrainToken,
   });
 
   return `${baseUrl}?${params.toString()}`;
-}, [project.id, selectedInstaller]);
+}, [project.terrainToken]);
 
 const groupedMissions = useMemo(() => {
   return {
@@ -590,10 +581,20 @@ const groupedMissions = useMemo(() => {
 const isTerrainAccessGranted = mode === "terrain" && isTerrainLink;
 
 useEffect(() => {
-  if (hasTerrainParams) {
+  async function handleTerrainAccess() {
+    if (!hasTerrainParams) return;
+
+    const success = await loadTerrainMissionByToken(urlParams.terrainToken);
+
     setCurrentScreen("terrain");
+
+    if (!success) {
+      console.error("Lien terrain invalide.");
+    }
   }
-}, [hasTerrainParams]);
+
+  handleTerrainAccess();
+}, [hasTerrainParams, urlParams.terrainToken]);
 
 const totalPhotos = assets.reduce(
   (total, asset) => total + (asset.photos?.length || 0),
@@ -602,16 +603,26 @@ const totalPhotos = assets.reduce(
 
 useEffect(() => {
   async function loadSession() {
-    const { data } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession();
+
+    if (error) {
+      console.error("Erreur récupération session :", error);
+      return;
+    }
+
     const session = data.session;
 
     if (!session?.user) return;
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("*")
+      .select("full_name, role")
       .eq("id", session.user.id)
-      .single();
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Erreur chargement profil session :", profileError);
+    }
 
     setCurrentUser({
       id: session.user.id,
@@ -622,9 +633,13 @@ useEffect(() => {
 
     setIsAuthenticated(true);
 
-    if (!hasTerrainParams) {
-      setCurrentScreen("dashboard");
-    }
+      if (!hasTerrainParams) {
+        const restored = await restoreActiveMission(session.user.id);
+
+        if (!restored) {
+          setCurrentScreen("dashboard");
+        }
+}
   }
 
   loadSession();
@@ -638,6 +653,14 @@ useEffect(() => {
     loadInstallers(currentUser.id);
   }
 }, [isAuthenticated, currentUser?.id]);
+
+useEffect(() => {
+  loadInventoryByBrand(project.brandId);
+}, [project.brandId]);
+
+useEffect(() => {
+  console.log("ASSETS STATE UPDATED:", assets);
+}, [assets]);
 
   function addAssetPhoto(assetId, file) {
   if (!file) return;
@@ -674,29 +697,62 @@ useEffect(() => {
   setAssets((current) => current.filter((asset) => asset.id !== assetId));
   }
 
-  function addInventoryItemToMission(event) {
+  async function addInventoryItemToMission(event) {
   event.preventDefault();
 
-  if (!selectedInventoryItem) return;
+  if (!selectedInventoryItem || !project.id) return;
+
+   const alreadyAdded = assets.some(
+    (asset) => asset.inventoryItemId === selectedInventoryItem.id
+  );
+
+  if (alreadyAdded) {
+    console.warn("Ce support est déjà ajouté à la mission.");
+    return;
+  }
 
   const requestedQuantity = Number(inventorySelection.quantity) || 1;
   const safeQuantity = Math.min(
     Math.max(requestedQuantity, 1),
-    selectedInventoryItem.quantityAvailable
+    selectedInventoryItem.quantityAvailable || 1
   );
+
+  const payload = {
+    mission_id: project.id,
+    inventory_item_id: selectedInventoryItem.id,
+    name: selectedInventoryItem.name,
+    type: selectedInventoryItem.type,
+    quantity: safeQuantity,
+    zone: inventorySelection.zone,
+    priority: inventorySelection.priority,
+    status: "a-preparer",
+    note: selectedInventoryItem.note || "Aucune note terrain.",
+    reference_photo_url: selectedInventoryItem.referencePhoto || null,
+  };
+
+  const { data, error } = await supabase
+    .from("mission_items")
+    .insert(payload)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("Erreur ajout support mission :", error);
+    return;
+  }
 
   setAssets((current) => [
     {
-      id: Date.now(),
-      inventoryItemId: selectedInventoryItem.id,
-      type: selectedInventoryItem.type,
-      name: selectedInventoryItem.name,
-      quantity: safeQuantity,
-      zone: inventorySelection.zone,
-      priority: inventorySelection.priority,
-      status: "a-preparer",
-      note: selectedInventoryItem.note || "Aucune note terrain.",
-      referencePhoto: selectedInventoryItem.referencePhoto,
+      id: data.id,
+      inventoryItemId: data.inventory_item_id,
+      type: data.type,
+      name: data.name,
+      quantity: data.quantity,
+      zone: data.zone,
+      priority: data.priority,
+      status: data.status,
+      note: data.note,
+      referencePhoto: data.reference_photo_url,
       photos: [],
     },
     ...current,
@@ -802,17 +858,22 @@ async function handleLogin(event) {
   });
 
   if (error) {
+    console.error("Erreur login :", error);
     setLoginError("Identifiants incorrects.");
     return;
   }
 
   const user = data.user;
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("*")
+    .select("full_name, role")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
+
+  if (profileError) {
+    console.error("Erreur chargement profil :", profileError);
+  }
 
   setCurrentUser({
     id: user.id,
@@ -850,21 +911,24 @@ async function openMission(missionId) {
   }
 
   setProject({
-    ...defaultProject,
-    id: data.id,
-    eventName: data.event_name || "",
-    brandId: data.brand_id || "",
-    installerId: data.installer_id || "",
-    location: data.location || "",
-    date: data.event_date || "",
-    installDate: data.install_date || "",
-    installDeadline: data.install_deadline || "",
-    fieldContact: data.field_contact || "",
-    objective: data.objective || "",
-    terrainToken: data.terrain_token,
-  });
+  ...defaultProject,
+  id: data.id,
+  eventName: data.event_name || "",
+  brandId: data.brand_id || "",
+  installerId: data.installer_id || "",
+  location: data.location || "",
+  date: data.event_date || "",
+  installDate: data.install_date || "",
+  installDeadline: data.install_deadline || "",
+  fieldContact: data.field_contact || "",
+  fieldContactPhone: data.field_contact_phone || "",
+  objective: data.objective || "",
+  terrainToken: data.terrain_token,
+});
 
-  setAssets([]);
+  await loadMissionItems(data.id);
+
+  localStorage.setItem(ACTIVE_MISSION_STORAGE_KEY, data.id);
   setActiveMissionId(data.id);
   setCurrentScreen("mission");
 }
@@ -889,10 +953,12 @@ async function createNewMission() {
   const payload = {
     owner_id: userId,
     event_name: "Nouvelle mission",
+    event_date: project.date || null,
     location: "",
     install_date: null,
     install_deadline: null,
     field_contact: "",
+    field_contact_phone: "",
     objective: "",
     status: "draft",
   };
@@ -914,6 +980,7 @@ async function createNewMission() {
     ...defaultProject,
     id: data.id,
     eventName: data.event_name,
+    date: data.event_date || "",
     brandId: data.brand_id || "",
     installerId: data.installer_id || "",
     location: data.location || "",
@@ -921,12 +988,14 @@ async function createNewMission() {
     installDate: data.install_date || "",
     installDeadline: data.install_deadline || "",
     fieldContact: data.field_contact || "",
+    fieldContactPhone: data.field_contact_phone || "",
     objective: data.objective || "",
     terrainToken: data.terrain_token,
   });
 
   setAssets([]);
   setActiveMissionId(data.id);
+  localStorage.setItem(ACTIVE_MISSION_STORAGE_KEY, data.id);
   setCurrentScreen("mission");
 
   await loadMissions(userId);
@@ -1271,9 +1340,11 @@ async function saveMissionToSupabase() {
     brand_id: isValidUuid(project.brandId) ? project.brandId : null,
     installer_id: isValidUuid(project.installerId) ? project.installerId : null,
     location: project.location || "",
+    event_date: project.date || null,
     install_date: project.installDate || null,
     install_deadline: project.installDeadline || null,
     field_contact: project.fieldContact || "",
+    field_contact_phone: project.fieldContactPhone || "",
     objective: project.objective || "",
     status: isValidUuid(project.installerId) ? "assigned" : "draft",
   };
@@ -1334,38 +1405,194 @@ async function loadInstallers(userId = currentUser?.id) {
   setInstallers(data || []);
 }
 
+async function loadInventoryByBrand(brandId) {
+  if (!brandId || !isValidUuid(brandId)) {
+    setInventory([]);
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("inventory_items")
+    .select("*")
+    .eq("brand_id", brandId)
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Erreur chargement inventaire :", error);
+    setInventory([]);
+    return;
+  }
+
+  const formattedInventory = (data || []).map((item) => ({
+    id: item.id,
+    brandId: item.brand_id,
+    type: item.type,
+    name: item.name,
+    quantityAvailable: item.quantity_available,
+    condition: item.condition,
+    referencePhoto: item.reference_photo_url,
+    note: item.note,
+  }));
+
+  console.log("INVENTORY LOADED:", formattedInventory);
+
+  setInventory(formattedInventory);
+}
+async function loadMissionItems(missionId) {
+  console.log("LOAD MISSION ITEMS FOR:", missionId);
+
+  if (!missionId) return;
+
+  const { data, error } = await supabase
+    .from("mission_items")
+    .select("*")
+    .eq("mission_id", missionId)
+    .order("created_at", { ascending: false });
+
+  console.log("MISSION ITEMS DATA:", data);
+  console.log("MISSION ITEMS ERROR:", error);
+
+  if (error) {
+    console.error("Erreur chargement supports mission :", error);
+    setAssets([]);
+    return;
+  }
+
+  const formattedAssets = (data || []).map((item) => ({
+    id: item.id,
+    inventoryItemId: item.inventory_item_id,
+    type: item.type,
+    name: item.name,
+    quantity: item.quantity,
+    zone: item.zone,
+    priority: item.priority,
+    status: item.status,
+    note: item.note,
+    referencePhoto: item.reference_photo_url,
+    photos: [],
+  }));
+
+  console.log("FORMATTED ASSETS:", formattedAssets);
+  setAssets(formattedAssets);
+}
+
+async function restoreActiveMission(userId) {
+  const savedMissionId = localStorage.getItem(ACTIVE_MISSION_STORAGE_KEY);
+
+  if (!savedMissionId) return false;
+
+  const { data, error } = await supabase
+    .from("missions")
+    .select("*")
+    .eq("id", savedMissionId)
+    .eq("owner_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Erreur restauration mission :", error);
+    return false;
+  }
+
+  if (!data) {
+    localStorage.removeItem(ACTIVE_MISSION_STORAGE_KEY);
+    return false;
+  }
+
+  setProject({
+    ...defaultProject,
+    id: data.id,
+    eventName: data.event_name || "",
+    brandId: data.brand_id || "",
+    installerId: data.installer_id || "",
+    location: data.location || "",
+    date: data.event_date || "",
+    installDate: data.install_date || "",
+    installDeadline: data.install_deadline || "",
+    fieldContact: data.field_contact || "",
+    fieldContactPhone: data.field_contact_phone || "",
+    objective: data.objective || "",
+    terrainToken: data.terrain_token,
+  });
+
+  await loadMissionItems(data.id);
+
+  setActiveMissionId(data.id);
+  setCurrentScreen("mission");
+
+  return true;
+}
+
+async function loadTerrainMissionByToken(token) {
+  if (!token) return false;
+
+  const { data, error } = await supabase
+    .from("missions")
+    .select(`
+      *,
+      brands(name),
+      installers(name, phone)
+    `)
+    .eq("terrain_token", token)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Erreur chargement mission terrain :", error);
+    return false;
+  }
+
+  if (!data) {
+    return false;
+  }
+
+  setProject({
+    ...defaultProject,
+    id: data.id,
+    eventName: data.event_name || "",
+    brandId: data.brand_id || "",
+    installerId: data.installer_id || "",
+    location: data.location || "",
+    date: data.event_date || "",
+    installDate: data.install_date || "",
+    installDeadline: data.install_deadline || "",
+    fieldContact: data.field_contact || "",
+    fieldContactPhone: data.field_contact_phone || "",
+    objective: data.objective || "",
+    terrainToken: data.terrain_token,
+    brandName: data.brands?.name || "",
+    installerName: data.installers?.name || "",
+    installerPhone: data.installers?.phone || "",
+  });
+
+  await loadMissionItems(data.id);
+
+  setActiveMissionId(data.id);
+  return true;
+}
+
 if (currentScreen === "terrain") {
-  if (!isTerrainLink) {
+  const terrainAccessIsValid = !!project.id && project.terrainToken === urlParams.terrainToken;
+
+  const installedCount = assets.filter((asset) =>
+  ["installe", "valide", "recupere"].includes(asset.status)
+).length;
+
+const issueCount = assets.filter((asset) => asset.status === "probleme").length;
+
+const terrainProgress =
+  assets.length > 0 ? Math.round((installedCount / assets.length) * 100) : 0;
+
+  if (!terrainAccessIsValid) {
     return (
       <main className="relative min-h-screen overflow-hidden bg-[#050B14] text-white">
-        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(rgba(255,255,255,0.16)_1px,transparent_1px)] bg-[size:22px_22px] opacity-35" />
-
         <section className="relative z-10 mx-auto flex min-h-screen max-w-3xl items-center justify-center px-4 py-10">
           <Card className="w-full rounded-[2rem] border border-red-400/20 bg-red-500/10 text-white backdrop-blur-xl">
             <CardContent className="p-6 md:p-8">
-              <div className="flex items-start gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-500/15 text-red-300">
-                  <AlertTriangle className="h-6 w-6" />
-                </div>
-
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.18em] text-red-300">
-                    Accès refusé
-                  </p>
-
-                  <h1 className="mt-2 text-3xl font-black tracking-[-0.05em] text-white">
-                    Lien terrain invalide
-                  </h1>
-
-                  <p className="mt-3 text-sm font-semibold leading-6 text-white/60">
-                    Cette mission est accessible uniquement via le lien envoyé par le donneur de mission.
-                  </p>
-
-                  <p className="mt-4 text-sm font-medium leading-6 text-white/45">
-                    Demande au donneur de mission de te renvoyer le bon lien.
-                  </p>
-                </div>
-              </div>
+              <h1 className="text-3xl font-black tracking-[-0.05em]">
+                Lien terrain invalide
+              </h1>
+              <p className="mt-3 text-sm font-semibold leading-6 text-white/60">
+                Cette mission est accessible uniquement via le lien envoyé par le donneur de mission.
+              </p>
             </CardContent>
           </Card>
         </section>
@@ -1379,70 +1606,137 @@ if (currentScreen === "terrain") {
 
       <section className="relative z-10 mx-auto max-w-5xl px-4 py-5 md:px-8 md:py-8">
         <header className="rounded-[2rem] border border-white/10 bg-[#0B1624]/85 p-5 text-white backdrop-blur-xl md:p-7">
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-500 text-white">
-              <Truck className="h-6 w-6" />
-            </div>
+  <div className="flex flex-col items-center text-center">
+    <div className="flex h-20 w-20 items-center justify-center rounded-[1.6rem] bg-orange-500 text-white">
+      <Truck className="h-9 w-9" />
+    </div>
 
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
-                Vue terrain
-              </p>
+    <p className="mt-5 text-xs font-black uppercase tracking-[0.28em] text-orange-400">
+      Mission terrain
+    </p>
 
-              <h1 className="mt-1 text-3xl font-black tracking-[-0.05em] md:text-4xl">
-                {project.eventName}
-              </h1>
+    <h1 className="mt-3 max-w-3xl text-4xl font-black leading-[0.95] tracking-[-0.07em] md:text-6xl">
+      {project.eventName}
+    </h1>
 
-              <p className="mt-2 text-sm font-semibold leading-6 text-white/55">
-                Mission assignée à {selectedInstaller?.name}
-              </p>
-            </div>
-          </div>
-        </header>
+    <div className="mt-6 flex flex-wrap justify-center gap-3">
+      {project.location ? (
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(project.location)}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.08] px-4 py-2 text-sm font-black text-white transition hover:bg-orange-500"
+        >
+          📍 {project.location}
+        </a>
+      ) : (
+        <span className="rounded-full border border-white/10 bg-white/[0.08] px-4 py-2 text-sm font-black text-white/50">
+          Lieu non renseigné
+        </span>
+      )}
+    </div>
+
+    <div className="mt-6 inline-flex flex-col items-center rounded-2xl border border-orange-400/20 bg-orange-500/10 px-8 py-5">
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-orange-300">
+        À terminer avant
+      </p>
+
+      <p className="mt-2 text-5xl font-black tracking-[-0.06em] text-white">
+        {project.installDeadline || "--:--"}
+      </p>
+
+      <p className="mt-1 text-sm font-bold text-white/45">
+        {project.installDate || "Date non renseignée"}
+      </p>
+    </div>
+
+    <div className="mt-8 grid w-full grid-cols-3 gap-3">
+      {/* tes 3 cards stats ici */}
+    </div>
+  </div>
+</header>
 
         <section className="mt-5 grid gap-5">
           <Card className="rounded-[2rem] border border-white/10 bg-[#0B1624]/85 text-white backdrop-blur-xl">
-            <CardContent className="p-5 md:p-6">
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
-                Brief terrain
-              </p>
+  <CardContent className="p-5 md:p-6">
+    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+          Brief terrain
+        </p>
 
-              <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
-                Informations mission
-              </h2>
+        <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
+          Informations essentielles
+        </h2>
+      </div>
 
-              <div className="mt-4 grid gap-3 text-sm font-semibold leading-6 text-white/60">
-                <p>Lieu : {project.location || "Non renseigné"}</p>
-                <p>
-                  Installation : {project.installDate || "Date non renseignée"} avant{" "}
-                  {project.installDeadline || "heure non renseignée"}
-                </p>
-                <p>
-                  Contact organisateur : {project.fieldContact || "Non renseigné"}
-                </p>
-              </div>
+      {project.fieldContactPhone && (
+        <a
+          href={`tel:${project.fieldContactPhone.replace(/\s/g, "")}`}
+          className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-black text-slate-950 transition hover:bg-orange-500 hover:text-white"
+        >
+          Appeler le contact
+        </a>
+      )}
+    </div>
 
-              {project.objective && (
-                <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.05] p-4">
-                  <div className="text-sm font-black text-white">
-                    Objectif visibilité
-                  </div>
-                  <p className="mt-2 text-sm font-medium leading-6 text-white/60">
-                    {project.objective}
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+    <div className="mt-5 grid gap-3 md:grid-cols-3">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.14em] text-white/35">
+          Lieu
+        </p>
+        <p className="mt-2 text-sm font-bold leading-6 text-white/75">
+          {project.location || "Non renseigné"}
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.14em] text-white/35">
+          Date installation
+        </p>
+        <p className="mt-2 text-sm font-bold leading-6 text-white/75">
+          {project.installDate || "Non renseignée"} ·{" "}
+          {project.installDeadline || "heure non renseignée"}
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.14em] text-white/35">
+          Contact organisateur
+        </p>
+        <p className="mt-2 text-sm font-bold leading-6 text-white/75">
+          {project.fieldContact || "Non renseigné"}
+        </p>
+      </div>
+    </div>
+
+    {project.objective && (
+      <div className="mt-5 rounded-2xl border border-orange-400/20 bg-orange-500/10 p-4">
+        <div className="text-sm font-black text-orange-300">
+          Objectif visibilité
+        </div>
+        <p className="mt-2 text-sm font-medium leading-6 text-white/70">
+          {project.objective}
+        </p>
+      </div>
+    )}
+  </CardContent>
+</Card>
 
           <div className="space-y-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
-                Supports à installer
-              </p>
-              <h2 className="mt-1 text-3xl font-black tracking-[-0.05em]">
-                Mission terrain
-              </h2>
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+                  Supports à installer
+                </p>
+                <h2 className="mt-1 text-3xl font-black tracking-[-0.05em]">
+                  Checklist terrain
+                </h2>
+              </div>
+
+              <div className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-sm font-black text-white/60">
+                {installedCount}/{assets.length} installés
+              </div>
             </div>
 
             {assets.length === 0 ? (
@@ -1460,7 +1754,7 @@ if (currentScreen === "terrain") {
                   asset={asset}
                   mode="terrain"
                   onStatusChange={updateAssetStatus}
-                  onDelete={deleteAsset}
+                  onDelete={() => {}}
                   onPhotoUpload={addAssetPhoto}
                 />
               ))
@@ -1476,12 +1770,12 @@ if (currentScreen === "terrain") {
                   </p>
 
                   <h2 className="mt-1 text-2xl font-black tracking-[-0.04em]">
-                    Finaliser le montage
+                    Soumettre la mission
                   </h2>
 
                   <p className="mt-1 text-sm font-semibold leading-6 text-white/50">
-                    {totalPhotos} photo{totalPhotos > 1 ? "s" : ""} ajoutée
-                    {totalPhotos > 1 ? "s" : ""} sur cette mission.
+                    Ajoute les preuves photo puis soumets la mission au donneur pour validation finale.
+                    {totalPhotos > 0 && ` ${totalPhotos} photo${totalPhotos > 1 ? "s" : ""} ajoutée${totalPhotos > 1 ? "s" : ""}.`}
                   </p>
                 </div>
 
@@ -1493,7 +1787,7 @@ if (currentScreen === "terrain") {
                       : "bg-orange-500 text-white hover:bg-orange-600"
                   }`}
                 >
-                  {missionCompleted ? "Montage terminé ✓" : "Montage terminé"}
+                  {missionCompleted ? "Mission soumise ✓" : "Soumettre la mission"}
                 </Button>
               </div>
 
@@ -1760,41 +2054,6 @@ if (currentScreen === "dashboard" && isAuthenticated) {
   );
 }
 
-if (mode === "terrain" && !isTerrainAccessGranted) {
-  return (
-    <main className="min-h-screen bg-[#f5f6f8] text-slate-950">
-      <section className="mx-auto flex min-h-screen max-w-3xl items-center justify-center px-4 py-10">
-        <Card className="w-full rounded-[2rem] border-red-100 bg-red-50 shadow-sm">
-          <CardContent className="p-6 md:p-8">
-            <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-600">
-                <AlertTriangle className="h-6 w-6" />
-              </div>
-
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-red-500">
-                  Accès refusé
-                </p>
-
-                <h1 className="mt-2 text-3xl font-black tracking-[-0.05em] text-red-700">
-                  Mission terrain non accessible
-                </h1>
-
-                <p className="mt-3 text-sm font-semibold leading-6 text-red-600">
-                  Cette mission est accessible uniquement via le lien terrain généré pour le monteur assigné.
-                </p>
-
-                <p className="mt-4 text-sm font-medium leading-6 text-red-500">
-                  Demande au donneur de mission de te renvoyer le bon lien.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-    </main>
-  );
-}
 if (currentScreen === "mission" && isAuthenticated) {
   return (
    <main className="relative min-h-screen overflow-hidden bg-[#050B14] text-white">
@@ -1937,7 +2196,8 @@ if (currentScreen === "mission" && isAuthenticated) {
                   <Field label="Date événement" type="date" value={project.date} onChange={(value) => updateProject("date", value)} />
                   <Field label="Date installation" type="date" value={project.installDate} onChange={(value) => updateProject("installDate", value)} />
                   <Field label="Heure limite installation" type="time" value={project.installDeadline} onChange={(value) => updateProject("installDeadline", value)} />
-                  <Field label="Contact terrain" value={project.fieldContact} onChange={(value) => updateProject("fieldContact", value)} placeholder="Renseigner contact" />
+                  <Field label="Contact sur place" value={project.fieldContact} onChange={(value) => updateProject("fieldContact", value)} placeholder="Renseigner contact" />
+                    <Field label="N° contact sur place" value={project.fieldContactPhone} onChange={(value) => updateProject("fieldContactPhone", value)} placeholder="06 00 00 00 00"/>
                   <label className="block">
                     <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">
                       Monteur assigné
@@ -2576,6 +2836,10 @@ if (currentScreen === "mission" && isAuthenticated) {
                 {assets.length} éléments
               </Badge>
             </div>
+
+<p className="text-xs font-black text-white">
+  Supports chargés : {assets.length}
+</p>
 
             {assets.length === 0 ? (
             <Card className="rounded-3xl border-dashed border-black/10 bg-white shadow-sm shadow-slate-200/60">
